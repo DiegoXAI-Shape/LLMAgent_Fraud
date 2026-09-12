@@ -9,14 +9,52 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import pandas as pd
+
 import config
 from agents import auditor, investigator, verifier
-from data_pipeline.ingest import IngestValidationError, run_ingest
+from data_pipeline import universal_loader
+from data_pipeline.ingest import REQUIRED_SHEETS, IngestValidationError, run_ingest
+
+
+def _ya_es_canonico(ruta: Path) -> bool:
+    """True si el .xlsx ya trae las 5 hojas con el nombre exacto que espera ingest."""
+    if ruta.suffix.lower() not in {".xlsx", ".xls"}:
+        return False
+    try:
+        hojas = pd.ExcelFile(ruta).sheet_names
+    except Exception:
+        return False
+    return all(h in hojas for h in REQUIRED_SHEETS)
+
+
+def preparar_entrada(ruta: Path) -> Path:
+    """Traduce cualquier formato al Excel canónico que `ingest.py` sabe leer.
+
+    Un archivo que YA viene canónico se pasa derecho: es la ruta probada, y
+    hacerlo pasar por el traductor solo agregaría una oportunidad de romperlo.
+    Todo lo demás (Excel ajeno, CSV, PDF, imagen) entra por `universal_loader`,
+    que es la única puerta del sistema.
+    """
+    if _ya_es_canonico(ruta):
+        print(f"    formato canónico, se ingiere tal cual")
+        return ruta
+
+    hojas, reporte = universal_loader.cargar(ruta)
+    for linea in reporte:
+        print(linea)
+    if not hojas:
+        raise IngestValidationError(f"No se pudo extraer ninguna tabla de {ruta.name}")
+
+    destino = universal_loader.escribir_excel_canonico(hojas, config.ROOT_DIR / "traducido.xlsx")
+    print(f"    traducido -> {destino.name}")
+    return destino
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Agente Forense de Fraude Fiscal (EFOS/SAT)")
-    parser.add_argument("--excel", default=str(config.EXCEL_PATH), help="Ruta al Excel de entrada")
+    parser.add_argument("--archivo", "--excel", dest="archivo", default=str(config.EXCEL_PATH),
+                         help="Archivo de entrada: .xlsx, .csv, .pdf, .png o .jpg")
     parser.add_argument("--model", default=config.OLLAMA_MODEL, help="Modelo local (Ollama) para el Investigador")
     parser.add_argument("--rfc", action="append", default=None,
                          help="RFC específico a investigar (repetible). Si se omite, investiga todos los es_empresa_auditada.")
@@ -24,10 +62,10 @@ def main() -> None:
 
     t0 = time.time()
 
-    print(f"[1/4] Ingesta: {args.excel}")
+    print(f"[1/4] Ingesta: {args.archivo}")
     try:
-        counts = run_ingest(Path(args.excel))
-    except (IngestValidationError, FileNotFoundError) as exc:
+        counts = run_ingest(preparar_entrada(Path(args.archivo)))
+    except (IngestValidationError, FileNotFoundError, ValueError) as exc:
         print(f"ERROR de ingesta: {exc}", file=sys.stderr)
         sys.exit(1)
     for tabla, n in counts.items():

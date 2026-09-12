@@ -14,9 +14,15 @@ traducido.xlsx
 prueba_jurado.xlsx
 data/sat/_crudos/
 
-# Documentos de prueba con datos personales reales -- NUNCA subir
+# Documentos de prueba con datos personales reales -- NUNCA subir.
+# Son CFDI timbrados de verdad: traen RFC, CURP, NSS, cuenta bancaria y sueldo
+# de una persona real, y este repositorio es público. Se ignoran por extensión
+# completa (no por nombre) porque cada prueba nueva llega con un nombre distinto
+# y basta un descuido para publicarlos.
 nomina.png
 *.cfdi.png
+*.pdf
+*.PDF
 
 # Python
 __pycache__/

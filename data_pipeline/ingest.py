@@ -94,13 +94,16 @@ def load_workbook(excel_path: Path) -> dict[str, pd.DataFrame]:
 
 def build_entities_rows(df: pd.DataFrame) -> list[tuple]:
     _require_columns(df, "Entidades", ENTITIES_COLUMNS)
-    _require_non_null(df, "Entidades", ["rfc", "razon_social", "fecha_constitucion", "codigo_postal"])
+    # fecha_constitucion NO se exige: un CFDI suelto no la contiene y la
+    # alternativa sería inventarla. Ver la nota en el DDL de core/db.py.
+    _require_non_null(df, "Entidades", ["rfc", "razon_social", "codigo_postal"])
     rows = []
     for i, row in df.iterrows():
         rows.append((
             str(row["rfc"]).strip(),
             str(row["razon_social"]).strip(),
-            _parse_date(row["fecha_constitucion"], "Entidades", "fecha_constitucion", i),
+            None if pd.isna(row.get("fecha_constitucion"))
+            else _parse_date(row["fecha_constitucion"], "Entidades", "fecha_constitucion", i),
             None if pd.isna(row.get("representante_legal")) else str(row["representante_legal"]).strip(),
             str(row["codigo_postal"]).strip().zfill(5)[:5],
             _parse_bool(row.get("es_empresa_auditada", False)),

@@ -511,6 +511,55 @@ ya no contesta "no está en la lista" sobre un RFC que nunca existió; contesta
 pasa de ser obligatoria en cada campo a ser la excepción, solo donde el código
 levantó la mano.
 
+### 18. El mismo CFDI en PDF y en foto: el experimento controlado
+
+Hasta aquí el sistema solo comía Excel. Una búsqueda en los 15 archivos Python
+del proyecto confirmó que la única mención de "PDF" o "imagen" era un
+comentario: si un juez llegaba con un PNG, el programa no leía mal — **ni
+siquiera arrancaba** (`ValueError: cargar_tabular solo acepta .xlsx/.xls/.csv`).
+
+Se consiguió el **mismo comprobante** en los dos formatos: el PDF timbrado y una
+foto de su representación impresa. Mismo UUID, mismos montos, misma empresa. Eso
+permite comparar sin nada más de por medio:
+
+| | RFC del emisor | veredicto del validador |
+|---|---|---|
+| PDF (capa de texto, sin modelo) | `ADR531130N5A` | correcto |
+| PNG (visión, `qwen3.5:4b`) | `ADSR51130N5A` | **REVISAR** — "debería terminar en 8" |
+
+**Conclusión de diseño:** si el documento trae texto, el modelo no lo toca. La
+visión es el último recurso, no el primero. `cargar_documento` intenta en este
+orden: capa de texto del PDF → rasterizar → visión. Del PDF, los campos salen
+por expresión regular: exacto, gratis, sin posibilidad de alucinación.
+
+**Hallazgo secundario — pedir más campos hace que el modelo abandone campos.**
+Pidiéndole 4 campos a la imagen, devolvió los dos RFC. Pidiéndole los mismos
+campos dentro de una lista de 15, devolvió un JSON completo y bien formado pero
+con `receptor_rfc`, `razon_social_receptor` y los dos códigos postales
+**vacíos** — 2 de 2 intentos, y sin truncarse (374 de 1024 tokens disponibles).
+No era presupuesto ni formato: era atención repartida. La lectura se partió en
+**tres pasadas cortas** (identificadores / montos / descriptivos) y el
+`receptor_rfc` volvió a salir correcto.
+
+**El PAC no es parte de la operación.** El texto del CFDI contiene *tres* RFC,
+no dos: el tercero (`SCD110105654`) es el proveedor autorizado que timbra el
+comprobante. Tomarlo a ciegas habría inventado una relación comercial que no
+existe, así que se excluye explícitamente por su etiqueta y se reporta que se
+ignoró.
+
+**`fecha_constitucion` pasó a aceptar nulos.** Un CFDI identifica al emisor y al
+receptor pero no dice cuándo se constituyó la empresa. Con la columna en `NOT
+NULL`, la única forma de ingerir un documento era inventar una fecha — justo lo
+que este sistema existe para no hacer. Se verificó con `grep` en todo el
+proyecto que **ningún detector lee ese campo** (`EMPRESA_FACHADA` lo decide el
+Investigador por prompt, no por esa fecha), así que dejarlo vacío no degrada
+ninguna detección. Se prefirió un hueco honesto a un dato fabricado.
+
+**Una sola puerta.** `universal_loader.cargar()` despacha por extensión y el
+resto del pipeline nunca se entera de en qué formato llegó el caso. Un Excel que
+ya viene canónico se ingiere tal cual, sin pasar por el traductor: es la ruta
+probada y meterle un paso de más solo agregaría dónde romperse.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

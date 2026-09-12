@@ -42,7 +42,13 @@ DROP TABLE IF EXISTS entities;
 CREATE TABLE entities (
     rfc VARCHAR(13) PRIMARY KEY,
     razon_social TEXT NOT NULL,
-    fecha_constitucion DATE NOT NULL,
+    -- Nullable a propósito: un CFDI suelto (PDF/imagen) identifica al emisor y
+    -- al receptor, pero NO dice cuándo se constituyó la empresa. Antes era NOT
+    -- NULL, lo que obligaba a inventar una fecha para poder ingerir un
+    -- documento — justo el tipo de dato fabricado que este sistema existe para
+    -- evitar. Ningún detector lee este campo (se verificó con grep en todo el
+    -- proyecto), así que dejarlo vacío no degrada ninguna detección.
+    fecha_constitucion DATE,
     representante_legal TEXT,
     codigo_postal VARCHAR(5) NOT NULL,
     es_empresa_auditada BOOLEAN DEFAULT FALSE
