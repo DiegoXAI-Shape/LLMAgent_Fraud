@@ -101,6 +101,13 @@ Cada elemento de "evidencia" DEBE incluir su campo "tipo", con una de estas dos
 formas exactas: {"tipo": "factura", "uuid": "..."} o {"tipo": "transferencia",
 "tx_id": "..."}. Nunca omitas "tipo".
 
+La lista "evidencia" lleva EXACTAMENTE tantos elementos como pruebas reales
+tengas — puede ser uno solo. El ejemplo de arriba muestra dos nada más para
+enseñarte las dos formas posibles, NO porque tengan que ser dos. Está PROHIBIDO
+rellenar la lista con un elemento vacío o con el identificador en null para que
+se parezca al ejemplo: {"tipo": "transferencia", "tx_id": null} no es evidencia,
+es basura que invalida el expediente. Si solo tienes una factura, manda una.
+
 Los identificadores se COPIAN LITERALES del resultado de la herramienta: son
 cadenas largas tipo "62a25d9c-fbb3-4644-a23f-a06abddfef38". Está PROHIBIDO
 inventarlos o usar marcadores de posición como "TX_001", "uuid-1", "1", "2".

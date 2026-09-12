@@ -81,6 +81,15 @@ def enrich_lead(lead_dict: dict) -> dict:
 
     resueltos: list[dict[str, Any]] = []
     for item in lead_dict.get("evidencia") or []:
+        # El modelo a veces rellena la lista con un hueco vacío para que se
+        # parezca al ejemplo del prompt: {"tipo": "transferencia", "tx_id": null}.
+        # Un elemento sin identificador no aporta ni invalida nada -- se ignora,
+        # en vez de tumbar un caso que sí tiene evidencia real en los demás
+        # elementos. Lo que queda sigue pasando por toda la verificación.
+        identificador = item.get("uuid") or item.get("tx_id")
+        if identificador is None or not str(identificador).strip():
+            continue
+
         # El identificador manda sobre la etiqueta: el modelo a veces omite "tipo",
         # pero un uuid solo puede ser factura y un tx_id solo puede ser transferencia.
         tipo = item.get("tipo")
