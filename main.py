@@ -89,9 +89,13 @@ def main() -> None:
             descartados.append((lead, razon))
             print(f"    DESCARTADO: {lead.get('rfc_imputado')} -> {razon}")
 
+    # Se persiste ANTES de la llamada de red: el dictamen ya está decidido por el
+    # verificador determinista, y perderlo porque un servicio externo se cayó
+    # sería tirar todo el trabajo de las fases 1-3.
+    auditor.persist_cases(confirmados, descartados)
+
     print("[4/4] Auditor (Gemini, temp=0): redactando expediente final")
     markdown = auditor.generate_case_file(confirmados, descartados)
-    auditor.persist_cases(confirmados, descartados)
     output_path = auditor.save_case_file(markdown)
 
     elapsed = time.time() - t0

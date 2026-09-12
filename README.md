@@ -560,6 +560,84 @@ resto del pipeline nunca se entera de en qué formato llegó el caso. Un Excel q
 ya viene canónico se ingiere tal cual, sin pasar por el traductor: es la ruta
 probada y meterle un paso de más solo agregaría dónde romperse.
 
+### 19. El pipeline completo, de punta a punta, con el Auditor encendido
+
+Hasta esta entrada, `auditor.py` (Gemini) nunca se había ejecutado: la bitácora
+cubría las fases 0-2. Correrlo destapó tres cosas, y solo una era del código
+original.
+
+**Lo que funcionó a la primera.** Las fases 1-3 salieron completas y estables:
+
+```
+CONFIRMADO  KZH161209V32  EFOS_69B              $2,245,374.00
+DESCARTADO  KZR170308INT  (sin evidencia referenciada)
+CONFIRMADO  LSM120111199  KICKBACK_CIRCULAR     $1,275,488.33
+CONFIRMADO  MRY1312186JL  INGRESO_NO_DECLARADO  $  847,961.06
+CONFIRMADO  MXZ220310ALK  KICKBACK_CIRCULAR     $  627,727.24
+CONFIRMADO  QXT121125K07  SIN_MATERIALIDAD      $  949,764.83
+CONFIRMADO  VRH22081728I  KICKBACK_CIRCULAR     $1,315,556.03
+
+6 confirmados · 1 descartado · $7,261,871.49 · 3 corridas idénticas · 45-70s
+```
+
+Las **cinco** tipologías aparecen en una sola corrida, y el único descarte es
+correcto: un lead sin evidencia que el verificador tumbó.
+
+**Problema 1 — una caída de Gemini tiraba toda la investigación.** La primera
+corrida murió con `503 UNAVAILABLE` ("high demand"), un error del servidor de
+Google, no del código. Pero el pipeline entero se cayó con él y se perdió el
+trabajo de las tres fases previas. Para una demostración en vivo ese es el peor
+modo de falla posible, y el más fácil de evitar. Tres cambios:
+
+1. **Reintento con espera creciente** — un 503/429 es transitorio por
+   definición. En una corrida posterior el intento 1 recibió 503 y el intento 2
+   funcionó.
+2. **Redacción de respaldo sin ningún LLM** (`redactar_sin_modelo`). El Auditor
+   solo REDACTA: los montos, RFC, UUID y tipologías ya vienen verificados
+   contra la base. Un expediente sin Gemini no es un expediente con menos
+   pruebas — es el mismo hecho con peor prosa. Se probó aislado y el documento
+   sale completo, con su tabla de cadena de evidencia.
+3. **Persistir antes de la llamada de red.** `persist_cases` corría *después* de
+   Gemini, así que la corrida fallida no guardó nada pese a tener el dictamen ya
+   decidido. Se verificó el arreglo: con Gemini caído, los 7 dictámenes quedaron
+   en `investigation_cases`.
+
+**Problema 2 — los defaults de modelo estaban rotos.** Medido contra la API:
+`gemini-2.5-pro` (el default de `config.py`) devuelve **429, cuota agotada**, y
+`gemini-2.5-flash` devuelve **404, ya no disponible**. El proyecto solo
+funcionaba porque el `.env` local los pisaba: quien clonara el repo se quedaba
+con un default muerto. Corregido en `config.py` y en `.env.example`.
+
+**Problema 3 — un bug introducido al arreglar el problema 1.** Los reintentos se
+escribieron como `_client().models.generate_content(...)`, dejando al `Client`
+como temporal sin ninguna referencia viva: Python lo recolectaba y cerraba su
+sesión HTTP a media llamada. Los tres intentos fallaron con *"the client has
+been closed"* con la API perfectamente disponible. Se guarda en una variable.
+
+**Verificación de la promesa central.** Se cruzó el expediente redactado por
+Gemini contra `fraud.db`, campo por campo:
+
+| Prueba | Resultado |
+|---|---|
+| Montos de los 6 casos presentes | 6/6 |
+| Identificadores citados que existen | 10/10 (6 facturas + 4 transferencias) |
+| Cifras citadas que no existen en la base | **0** |
+
+Vale registrar que las dos primeras versiones de esa verificación dieron falsas
+alarmas **por errores del verificador, no del expediente**: una comparaba montos
+como texto (`$2245374.0` contra `2,245,374.00`: mismo número, distinto formato)
+y la otra buscaba los identificadores solo en `invoices.uuid`, ignorando
+`bank_ledger.tx_id`, que en esta base también tiene forma de UUID. La lección es
+la de siempre en este proyecto: una alarma no es un hallazgo hasta que se
+descarta que el error esté en quien mide.
+
+**Un último detalle de formato, con causa nuestra.** El expediente salía con
+`$2245374.0`: sin separadores y con un decimal. El Auditor no se equivocó —
+copió fielmente lo que le mandamos, porque `_format_confirmados` interpolaba el
+float de Python crudo. Ahora el monto se formatea como moneda *antes* de entrar
+al prompt, para que el modelo solo tenga que copiar. Copiar es más seguro que
+reformatear.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

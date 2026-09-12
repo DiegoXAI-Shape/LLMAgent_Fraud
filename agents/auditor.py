@@ -5,6 +5,7 @@ filtro determinista ya confirmó o descartó."""
 
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from agents.verifier import ESQUEMAS_VALIDOS
 from config import CASE_FILE_PATH, GEMINI_MODEL
 from core.db import get_connection
 
@@ -40,16 +42,35 @@ def _client() -> genai.Client:
 
 
 def _format_confirmados(confirmados: list[dict[str, Any]]) -> str:
+    """Arma el texto que se le entrega al Auditor.
+
+    Los montos se formatean AQUÍ, ya como moneda. Antes se interpolaba el float
+    de Python tal cual, así que al prompt llegaba `2245374.0` y el expediente
+    salía con `$2245374.0` — sin separadores y con un solo decimal. El número
+    era correcto (el Auditor lo copió fiel), pero la fuente del formato feo era
+    nuestra, no suya. Se le entrega ya formateado para que no tenga que
+    reescribir ninguna cifra: copiar es más seguro que reformatear.
+    """
     bloques = []
     for lead in confirmados:
+        monto = lead.get("monto_total_evidencia") or 0.0
+        lineas_evidencia = []
+        for item in lead.get("evidencia") or []:
+            identificador = item.get("uuid") or item.get("tx_id") or "—"
+            monto_item = item.get("monto")
+            monto_item_txt = f"${monto_item:,.2f}" if isinstance(monto_item, (int, float)) else "—"
+            suma = "suma al total" if item.get("contado_en_total") else "respaldo, no suma"
+            lineas_evidencia.append(
+                f"    - {item.get('tipo', '—')} {identificador} por {monto_item_txt} ({suma})"
+            )
         bloques.append(
             f"- rfc_imputado: {lead.get('rfc_imputado')}\n"
             f"  razon_social: {lead.get('razon_social')}\n"
             f"  tipo_esquema: {lead.get('tipo_esquema')}\n"
-            f"  monto_total_evidencia: {lead.get('monto_total_evidencia')}\n"
+            f"  monto_total_evidencia: ${monto:,.2f} MXN\n"
             f"  regla_fiscal: {lead.get('regla_fiscal')}\n"
             f"  narrativa: {lead.get('narrativa')}\n"
-            f"  evidencia: {lead.get('evidencia')}\n"
+            f"  evidencia:\n" + ("\n".join(lineas_evidencia) or "    (ninguna)") + "\n"
         )
     return "\n".join(bloques) if bloques else "(ninguno)"
 
@@ -75,6 +96,88 @@ def build_prompt(confirmados: list[dict[str, Any]], descartados: list[tuple[dict
     )
 
 
+MAX_REINTENTOS_GEMINI = 3
+ESPERA_BASE_SEGUNDOS = 2.0
+
+
+def _tabla_evidencia(evidencia: list[dict[str, Any]] | None) -> list[str]:
+    if not evidencia:
+        return ["_(sin evidencia listada)_", ""]
+    lineas = [
+        "| Tipo | Identificador | Monto | Suma al total |",
+        "|---|---|---|---|",
+    ]
+    for item in evidencia:
+        identificador = item.get("uuid") or item.get("tx_id") or "—"
+        monto = item.get("monto")
+        monto_txt = f"${monto:,.2f}" if isinstance(monto, (int, float)) else "—"
+        suma = "sí" if item.get("contado_en_total") else "no (respaldo)"
+        lineas.append(f"| {item.get('tipo', '—')} | `{identificador}` | {monto_txt} | {suma} |")
+    lineas.append("")
+    return lineas
+
+
+def redactar_sin_modelo(confirmados: list[dict[str, Any]],
+                        descartados: list[tuple[dict[str, Any], str]]) -> str:
+    """Arma el expediente con plantilla, sin ningún LLM.
+
+    El Auditor solo REDACTA: los montos, RFC, UUID y tipologías ya vienen
+    verificados contra la base por `verifier.py`. Por eso un expediente sin
+    Gemini no es un expediente degradado en su contenido probatorio — es el
+    mismo hecho, con peor prosa. Que una caída de un servicio externo tire toda
+    la investigación sería el peor modo de falla posible en una demostración
+    en vivo, y el más fácil de evitar.
+    """
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
+    partes = [
+        "# Expediente Forense de Fraude Fiscal",
+        "",
+        f"_Generado el {fecha}._",
+        "",
+        "> **Nota:** este expediente se redactó con plantilla determinista porque el "
+        "servicio del Auditor (Gemini) no estuvo disponible. Los hechos, montos e "
+        "identificadores son idénticos: provienen de la verificación contra la base "
+        "de datos, no de la redacción.",
+        "",
+        f"**Casos confirmados con prueba:** {len(confirmados)}  ",
+        f"**Leads descartados por falta de evidencia:** {len(descartados)}",
+        "",
+        "---",
+        "",
+        "## Casos confirmados",
+        "",
+    ]
+
+    if not confirmados:
+        partes += ["_Ninguno._", ""]
+    for numero, lead in enumerate(confirmados, start=1):
+        monto = lead.get("monto_total_evidencia") or 0.0
+        partes += [
+            f"### {numero}. {lead.get('rfc_imputado')} — {lead.get('razon_social') or 's/n'}",
+            "",
+            f"- **Tipología:** {lead.get('tipo_esquema')}",
+            f"- **Monto total acreditado:** ${monto:,.2f}",
+            f"- **Regla fiscal violada:** {lead.get('regla_fiscal') or 'N/A'}",
+            "",
+            f"{lead.get('narrativa') or ''}",
+            "",
+            "**Cadena de evidencia**",
+            "",
+        ]
+        partes += _tabla_evidencia(lead.get("evidencia"))
+
+    partes += ["---", "", "## Leads descartados", ""]
+    if not descartados:
+        partes += ["_Ninguno._", ""]
+    for lead, razon in descartados:
+        partes += [
+            f"- **{lead.get('rfc_imputado')}** "
+            f"(tentativa: {lead.get('tipo_esquema') or 'sin tipificar'}) — {razon}",
+        ]
+    partes.append("")
+    return "\n".join(partes)
+
+
 def generate_case_file(confirmados: list[dict[str, Any]], descartados: list[tuple[dict[str, Any], str]]) -> str:
     if not confirmados and not descartados:
         return (
@@ -83,17 +186,38 @@ def generate_case_file(confirmados: list[dict[str, Any]], descartados: list[tupl
             "como `es_empresa_auditada` en fraud.db).\n"
         )
 
-    client = _client()
     prompt = build_prompt(confirmados, descartados)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0,
-            system_instruction=AUDITOR_SYSTEM_INSTRUCTION,
-        ),
-    )
-    return response.text
+
+    # El cliente se crea UNA vez y se guarda en una variable. Escribirlo como
+    # `_client().models.generate_content(...)` deja al Client como temporal sin
+    # ninguna referencia viva: Python lo recolecta y cierra su sesión HTTP a
+    # media llamada, y los tres intentos fallan con "the client has been closed"
+    # aunque la API esté perfectamente disponible.
+    client = _client()
+
+    # Un 503/429 de Gemini es transitorio por definición ("high demand"), así que
+    # se reintenta con espera creciente antes de rendirse.
+    for intento in range(1, MAX_REINTENTOS_GEMINI + 1):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    system_instruction=AUDITOR_SYSTEM_INSTRUCTION,
+                ),
+            )
+            if response.text:
+                return response.text
+            print(f"Aviso: Gemini respondió vacío (intento {intento}).")
+        except Exception as exc:
+            print(f"Aviso: falló la llamada a Gemini (intento {intento}/{MAX_REINTENTOS_GEMINI}): {exc}")
+        if intento < MAX_REINTENTOS_GEMINI:
+            time.sleep(ESPERA_BASE_SEGUNDOS * (2 ** (intento - 1)))
+
+    print("Aviso: el Auditor (Gemini) no está disponible; se redacta el expediente "
+          "con la plantilla determinista. Los hechos verificados son los mismos.")
+    return redactar_sin_modelo(confirmados, descartados)
 
 
 def save_case_file(markdown_text: str, path: Path = CASE_FILE_PATH) -> Path:
@@ -124,8 +248,12 @@ def persist_cases(confirmados: list[dict[str, Any]], descartados: list[tuple[dic
             except sqlite3.IntegrityError as exc:
                 print(f"Aviso: no se pudo persistir el caso confirmado de {lead.get('rfc_imputado')}: {exc}")
         for lead, razon in descartados:
+            # La lista de tipologías se importa, no se repite: escrita a mano
+            # aquí se quedó sin 'INGRESO_NO_DECLARADO' cuando se agregó ese 5º
+            # esquema, y un lead descartado de ese tipo perdía su tipología al
+            # guardarse. Mismo problema que resolvió config.py con los umbrales.
             tipo_esquema = lead.get("tipo_esquema")
-            if tipo_esquema not in {"EFOS_69B", "KICKBACK_CIRCULAR", "EMPRESA_FACHADA", "SIN_MATERIALIDAD"}:
+            if tipo_esquema not in ESQUEMAS_VALIDOS:
                 tipo_esquema = None
             try:
                 conn.execute(

@@ -36,7 +36,12 @@ MIN_INGRESO_SIN_FACTURA = 200_000.0
 # --- Modelos ---
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+# El default importa: quien clone el repo sin un .env propio se queda con este
+# valor. Se midió contra la API real -- 'gemini-2.5-pro' devuelve 429
+# (cuota agotada) y 'gemini-2.5-flash' devuelve 404 (ya no está disponible),
+# así que un default con cualquiera de esos dos dejaba el proyecto roto para
+# cualquiera que no tuviera exactamente nuestro .env.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 # --- Parámetros del loop del Investigador ---
 MAX_ITERATIONS = 20
