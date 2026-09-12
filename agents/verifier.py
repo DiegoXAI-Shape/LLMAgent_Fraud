@@ -196,10 +196,9 @@ def _verify_materialidad(rfc_imputado: str, invoices_referenciadas: list[dict]) 
     for factura in invoices_referenciadas:
         if factura["receptor_rfc"] != rfc_imputado:
             continue
-        for item in _get_invoice_items(factura["uuid"]):
-            resultado = tools.verify_service_materiality(rfc_imputado, item["descripcion"])
-            if resultado["match"] is False:
-                return True, ""
+        resultado = tools.verify_service_materiality(rfc_imputado, factura["uuid"])
+        if resultado["match"] is False:
+            return True, ""
     return False, f"No se encontró una inconsistencia de materialidad verificable para {rfc_imputado}."
 
 

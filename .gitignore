@@ -14,6 +14,10 @@ traducido.xlsx
 prueba_jurado.xlsx
 data/sat/_crudos/
 
+# Documentos de prueba con datos personales reales -- NUNCA subir
+nomina.png
+*.cfdi.png
+
 # Python
 __pycache__/
 *.py[cod]
@@ -25,4 +29,3 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
-

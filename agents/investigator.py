@@ -63,8 +63,9 @@ ninguno ni concluir a medio camino):
    y max_hops=6, para ver si el RFC participa en un ciclo de transferencias
    (round-tripping / kickback circular).
 5. Para CADA factura relevante encontrada en el paso 2, verify_service_materiality
-   con el concepto real de invoice_items (no lo inventes, tráelo con query_database
-   sobre invoice_items) para detectar falta de materialidad.
+   pasándole el rfc investigado y el uuid de esa factura. La herramienta lee el
+   concepto real de la base de datos ella sola -- tú NO le pasas ningún texto de
+   concepto, solo el uuid.
 6. query_database para ver si el RFC investigado recibió alguna transferencia en
    bank_ledger (cuenta_destino_rfc) con cfdi_uuid IS NULL — dinero que entró sin
    ninguna factura que lo respalde es posible ingreso no declarado.

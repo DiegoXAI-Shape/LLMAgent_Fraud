@@ -395,6 +395,68 @@ detectar", hay que preguntar si de verdad requiere datos que no tenemos
 (como doble contabilidad) o si solo nos faltó construir el detector
 obvio, usando datos que ya teníamos desde el principio.
 
+### 15. Visión: lee el dinero perfecto, pero rompe los identificadores
+
+**La prueba:** se le dio a `qwen3.5:4b` la imagen de un CFDI real (un recibo de
+nómina timbrado) y se le pidió extraer los campos, con `temperature=0`. La
+verdad de referencia se puede leer a simple vista en la imagen, así que el
+error se mide exacto.
+
+| Campo | Real | Leyó | |
+|---|---|---|---|
+| folio fiscal (UUID, 36 caracteres) | `F545A134-664F-4047-BC06-C93AB2A0D2CA` | igual | correcto |
+| subtotal | 7,464.57 | 7,464.57 | correcto |
+| descuento | 620.62 | 620.62 | correcto |
+| total | 6,843.95 | 6,843.95 | correcto |
+| razón social | ALMACEN DE DROGAS | igual | correcto |
+| RFC receptor | HECD0511139P3 | igual | correcto |
+| **RFC emisor** | **ADR531130N5A** | **ADSR51130N5A** | **MAL** |
+| método de pago | PUE | PU | truncado |
+
+**El error del RFC es 100% reproducible:** 3 de 3 intentos devolvieron
+exactamente el mismo `ADSR51130N5A` — insertó una S y perdió un 3. No es ruido
+aleatorio, es una falla sistemática de lectura.
+
+**Por qué esto es lo peor que podía fallar:** todo el día el diseño se apoyó en
+"el modelo señala identificadores, el código resuelve los valores". Aquí pasó
+justo al revés de lo esperado — los montos salieron perfectos y el
+**identificador** se rompió. Y el RFC es precisamente la llave con la que se
+consulta la lista 69-B: un RFC mal leído hace que `check_sat_blacklist`
+responda "no está en la lista" sobre una empresa que no existe. Es un falso
+negativo **silencioso**, que se ve idéntico a una revisión limpia.
+
+**Conclusión:** la lectura por visión no puede alimentar la base sin
+confirmación humana de los identificadores. Los montos sí se pueden confiar;
+los RFCs y folios, no.
+
+### 16. El modelo inventaba el concepto que le pasaba a la herramienta
+
+**Síntoma:** `QXT121125K07` (la empresa fachada sembrada, un fraude real)
+regresaba `tipo_esquema` vacío — el modelo concluía "no hay nada". No era falta
+de turnos: concluía en 4 de 20.
+
+**Diagnóstico:** el rastreo de argumentos mostró que llamó
+`verify_service_materiality(rfc="QXT121125K07", concepto="Servicios de
+consultoría en tecnología y desarrollo de software")` — un concepto
+**inventado**. El real en la base es *"Consultoría estratégica en fusiones y
+adquisiciones corporativas"*. Nunca consultó `invoice_items`. Y como el
+concepto inventado sí describe un entregable concreto, pasó la prueba de
+materialidad y el fraude se declaró inexistente.
+
+Es el mismo bug de la entrada 5, que en su momento se intentó arreglar con una
+instrucción en el prompt ("no lo inventes, tráelo con query_database"). La
+instrucción no aguantó.
+
+**Fix estructural:** la herramienta cambió de firma. Ya no recibe
+`concepto` (texto libre que el modelo puede inventar) sino `invoice_uuid`, y
+lee los conceptos reales de la base ella misma. Mismo principio que con los
+montos y la razón social: el modelo señala QUÉ fila revisar, el código resuelve
+su contenido.
+
+**Verificado:** la herramienta devuelve `match=False` sobre el uuid real,
+`match=None` sobre un uuid inventado, y en la corrida completa `QXT121125K07`
+pasó de fallar a confirmar `SIN_MATERIALIDAD` con $949,764.83 exactos.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

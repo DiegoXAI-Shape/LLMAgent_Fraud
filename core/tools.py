@@ -172,8 +172,43 @@ def _normalizar(texto: str) -> str:
     return "".join(c for c in descompuesto if not unicodedata.combining(c))
 
 
-def verify_service_materiality(rfc: str, concepto: str) -> dict:
-    """Evalúa la materialidad del concepto facturado frente al giro del RFC.
+def verify_service_materiality(rfc: str, invoice_uuid: str) -> dict:
+    """Evalúa la materialidad de los conceptos REALES de una factura.
+
+    El concepto se lee de la base de datos a partir del uuid -- NO lo
+    proporciona quien llama. Antes esta función recibía el texto del concepto y
+    el modelo lo inventaba: llamaba con "Servicios de consultoría en tecnología"
+    cuando la factura de verdad decía "Consultoría estratégica en fusiones y
+    adquisiciones", y como el inventado sí es específico, el fraude se declaraba
+    inexistente. Mismo principio que el resto del sistema: el modelo señala QUÉ
+    fila revisar, el código resuelve su contenido.
+    """
+    conn = _readonly_connection()
+    try:
+        filas = conn.execute(
+            "SELECT descripcion FROM invoice_items WHERE invoice_uuid = ?", (invoice_uuid,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not filas:
+        return {
+            "rfc": rfc,
+            "invoice_uuid": invoice_uuid,
+            "match": None,
+            "razon": f"No existe ninguna partida para la factura {invoice_uuid}.",
+        }
+
+    evaluaciones = [_evaluar_concepto(rfc, fila["descripcion"]) for fila in filas]
+    # Basta con que UN concepto de la factura falle para marcarla.
+    for evaluacion in evaluaciones:
+        if evaluacion["match"] is False:
+            return dict(evaluacion, invoice_uuid=invoice_uuid)
+    return dict(evaluaciones[0], invoice_uuid=invoice_uuid)
+
+
+def _evaluar_concepto(rfc: str, concepto: str) -> dict:
+    """Compara un concepto contra el giro registrado del RFC.
 
     Marca falta de materialidad (match=False) solo cuando se cumplen LAS DOS
     condiciones: el concepto no corresponde al giro registrado Y además es un
@@ -284,10 +319,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "rfc": {"type": "string", "description": "RFC de la empresa a evaluar (normalmente el receptor)."},
-                    "concepto": {"type": "string", "description": "Descripción del concepto facturado."},
+                    "rfc": {"type": "string", "description": "RFC de la empresa a evaluar (normalmente el receptor de la factura)."},
+                    "invoice_uuid": {"type": "string", "description": "uuid de la factura a revisar. La herramienta lee el concepto real de la base de datos; NO se lo pases tú."},
                 },
-                "required": ["rfc", "concepto"],
+                "required": ["rfc", "invoice_uuid"],
             },
         },
     },
@@ -297,7 +332,7 @@ TOOL_FUNCTIONS = {
     "query_database": lambda args: query_database(args["sql"]),
     "find_money_cycles": lambda args: find_money_cycles(args["min_amount"], args["max_hops"]),
     "check_sat_blacklist": lambda args: check_sat_blacklist(args["rfc"]),
-    "verify_service_materiality": lambda args: verify_service_materiality(args["rfc"], args["concepto"]),
+    "verify_service_materiality": lambda args: verify_service_materiality(args["rfc"], args["invoice_uuid"]),
 }
 
 
