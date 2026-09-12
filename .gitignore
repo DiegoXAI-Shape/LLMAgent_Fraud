@@ -10,6 +10,8 @@ fraud.db
 auditoria_empresa_input.xlsx
 giro_catalog.json
 CASE_FILE.md
+traducido.xlsx
+prueba_jurado.xlsx
 data/sat/_crudos/
 
 # Python
@@ -23,3 +25,4 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+

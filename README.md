@@ -74,6 +74,7 @@ python -m data_pipeline.sat_downloader
 │   ├── verifier.py          # resuelve montos por SQL + reglas de rechazo duras
 │   └── auditor.py           # redacta el expediente final con Gemini
 ├── data_pipeline/
+│   ├── universal_loader.py    # traduce archivos de estructura desconocida al esquema canónico
 │   ├── generate_mock_data.py  # Excel sintético con los 5 esquemas sembrados
 │   ├── ingest.py              # Excel -> fraud.db, valida tipos/nulos, sin LLM
 │   └── sat_downloader.py      # descarga y parsea los listados 69-B oficiales
