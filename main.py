@@ -1,54 +1,17 @@
-"""Pipeline orquestador: Ingesta -> Investigador -> Verificador determinista -> Auditor."""
+"""CLI: consume core.pipeline.ejecutar_pipeline e imprime cada evento en
+terminal. Toda la lógica del orquestador vive en core/pipeline.py -- este
+archivo solo decide CÓMO mostrar los eventos, para que main.py (terminal) y
+app.py (Streamlit) nunca puedan desincronizarse entre sí."""
 
 import argparse
 import sys
-import time
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import pandas as pd
-
 import config
-from agents import auditor, investigator, verifier
-from data_pipeline import universal_loader
-from data_pipeline.ingest import REQUIRED_SHEETS, IngestValidationError, run_ingest
-
-
-def _ya_es_canonico(ruta: Path) -> bool:
-    """True si el .xlsx ya trae las 5 hojas con el nombre exacto que espera ingest."""
-    if ruta.suffix.lower() not in {".xlsx", ".xls"}:
-        return False
-    try:
-        hojas = pd.ExcelFile(ruta).sheet_names
-    except Exception:
-        return False
-    return all(h in hojas for h in REQUIRED_SHEETS)
-
-
-def preparar_entrada(ruta: Path) -> Path:
-    """Traduce cualquier formato al Excel canónico que `ingest.py` sabe leer.
-
-    Un archivo que YA viene canónico se pasa derecho: es la ruta probada, y
-    hacerlo pasar por el traductor solo agregaría una oportunidad de romperlo.
-    Todo lo demás (Excel ajeno, CSV, PDF, imagen) entra por `universal_loader`,
-    que es la única puerta del sistema.
-    """
-    if _ya_es_canonico(ruta):
-        print(f"    formato canónico, se ingiere tal cual")
-        return ruta
-
-    hojas, reporte = universal_loader.cargar(ruta)
-    for linea in reporte:
-        print(linea)
-    if not hojas:
-        raise IngestValidationError(f"No se pudo extraer ninguna tabla de {ruta.name}")
-
-    destino = universal_loader.escribir_excel_canonico(hojas, config.ROOT_DIR / "traducido.xlsx")
-    print(f"    traducido -> {destino.name}")
-    return destino
+from core.pipeline import ejecutar_pipeline
 
 
 def main() -> None:
@@ -60,47 +23,48 @@ def main() -> None:
                          help="RFC específico a investigar (repetible). Si se omite, investiga todos los es_empresa_auditada.")
     args = parser.parse_args()
 
-    t0 = time.time()
+    for evento in ejecutar_pipeline(args.archivo, rfcs=args.rfc, model=args.model):
+        fase, estado = evento["fase"], evento["estado"]
 
-    print(f"[1/4] Ingesta: {args.archivo}")
-    try:
-        counts = run_ingest(preparar_entrada(Path(args.archivo)))
-    except (IngestValidationError, FileNotFoundError, ValueError) as exc:
-        print(f"ERROR de ingesta: {exc}", file=sys.stderr)
-        sys.exit(1)
-    for tabla, n in counts.items():
-        print(f"    {tabla}: {n} filas")
+        if fase == "ingesta":
+            if estado == "inicio":
+                print(f"[1/4] Ingesta: {evento['mensaje']}")
+            elif estado == "progreso":
+                print(f"    {evento['mensaje']}")
+            elif estado == "ok":
+                for tabla, n in evento["datos"]["counts"].items():
+                    print(f"    {tabla}: {n} filas")
+            elif estado == "error":
+                print(f"ERROR de ingesta: {evento['mensaje']}", file=sys.stderr)
+                sys.exit(1)
 
-    rfcs = args.rfc if args.rfc else investigator.get_candidate_rfcs()
-    print(f"[2/4] Investigador ({args.model}): investigando {len(rfcs)} RFC(s) -> {rfcs}")
-    borradores = investigator.run_investigation(rfcs, model=args.model)
-    print(f"    {len(borradores)} borradores generados.")
+        elif fase == "investigador":
+            if estado == "inicio":
+                d = evento["datos"]
+                print(f"[2/4] Investigador ({d['model']}): investigando {len(d['rfcs'])} RFC(s) -> {d['rfcs']}")
+            elif estado == "ok":
+                print(f"    {evento['datos']['n_borradores']} borradores generados.")
 
-    print("[3/4] Verificador determinista: aplicando filtro de evidencia dura")
-    confirmados = []
-    descartados = []
-    for borrador in borradores:
-        lead = verifier.enrich_lead(borrador)
-        ok, razon = verifier.verify_lead(lead)
-        if ok:
-            confirmados.append(lead)
-            print(f"    CONFIRMADO: {lead.get('rfc_imputado')} ({lead.get('tipo_esquema')})")
-        else:
-            descartados.append((lead, razon))
-            print(f"    DESCARTADO: {lead.get('rfc_imputado')} -> {razon}")
+        elif fase == "verificador":
+            if estado == "inicio":
+                print("[3/4] Verificador determinista: aplicando filtro de evidencia dura")
+            elif estado == "confirmado":
+                lead = evento["datos"]["lead"]
+                print(f"    CONFIRMADO: {lead.get('rfc_imputado')} ({lead.get('tipo_esquema')})")
+            elif estado == "descartado":
+                lead, razon = evento["datos"]["lead"], evento["datos"]["razon"]
+                print(f"    DESCARTADO: {lead.get('rfc_imputado')} -> {razon}")
 
-    # Se persiste ANTES de la llamada de red: el dictamen ya está decidido por el
-    # verificador determinista, y perderlo porque un servicio externo se cayó
-    # sería tirar todo el trabajo de las fases 1-3.
-    auditor.persist_cases(confirmados, descartados)
+        elif fase == "auditor":
+            if estado == "inicio":
+                print(f"[4/4] Auditor (Gemini, temp=0): redactando expediente final")
+            elif estado == "ok":
+                print(f"\nExpediente generado -> {evento['datos']['output_path']}")
 
-    print("[4/4] Auditor (Gemini, temp=0): redactando expediente final")
-    markdown = auditor.generate_case_file(confirmados, descartados)
-    output_path = auditor.save_case_file(markdown)
-
-    elapsed = time.time() - t0
-    print(f"\nExpediente generado -> {output_path}")
-    print(f"Confirmados: {len(confirmados)} | Descartados: {len(descartados)} | Tiempo total: {elapsed:.1f}s")
+        elif fase == "fin":
+            d = evento["datos"]
+            print(f"Confirmados: {d['n_confirmados']} | Descartados: {d['n_descartados']} | "
+                  f"Tiempo total: {d['elapsed_seconds']}s")
 
 
 if __name__ == "__main__":

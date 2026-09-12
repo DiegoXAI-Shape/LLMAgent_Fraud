@@ -638,32 +638,73 @@ float de Python crudo. Ahora el monto se formatea como moneda *antes* de entrar
 al prompt, para que el modelo solo tenga que copiar. Copiar es más seguro que
 reformatear.
 
+### 20. El frontend: Streamlit, y un orquestador que ya no vive solo en `main.py`
+
+El equipo no tiene a nadie con experiencia en programación web, así que se
+descartó cualquier opción con HTML/CSS/JS (FastAPI+React, FastAPI+HTML/JS). Se
+eligió **Streamlit**: el frontend completo (`app.py`) está escrito en Python
+puro, sin una sola línea de otro lenguaje.
+
+**El problema real no era "qué framework", era "cómo mostrar 4 fases que tardan
+45-70s sin que la pantalla se quede en blanco hasta el final".** `main.py`
+corría las 4 fases de un jalón y solo imprimía al terminar cada una — servía
+para terminal, pero un frontend necesita actualizarse mientras el pipeline
+avanza, no solo al final.
+
+**Solución: separar el orquestador de cómo se muestra.** `core/pipeline.py`
+tiene ahora la única copia de "qué hace el pipeline y en qué orden", como un
+generador (`ejecutar_pipeline`) que va entregando eventos
+(`{"fase", "estado", ...}`) conforme ocurren — un RFC más investigado, un caso
+confirmado, el expediente terminado. `main.py` quedó reducido a imprimir esos
+eventos en terminal; `app.py` los consume igual y va llenando la página en
+vivo. Ninguno de los dos reimplementa la lógica del pipeline — ambos son
+"vistas" del mismo generador. Es el mismo principio que ya resolvió `config.py`
+con los umbrales duplicados: una sola fuente de verdad, no dos copias que se
+puedan desincronizar.
+
+**Verificado:** tras la refactorización, `main.py` se corrió contra el dataset
+completo y produjo la misma secuencia de 4 fases con el mismo formato de
+salida que antes del cambio (la diferencia en cuántos RFC confirmó una corrida
+frente a otra es la variabilidad ya conocida de Qwen entre corridas — ver
+"Estado actual" — no algo introducido por la refactorización). `app.py` se
+arrancó en modo headless y respondió `HTTP 200` sin errores de importación.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
 
-Corrida completa del pipeline (triage → investigación → verificación),
-2 veces seguidas, mismos resultados ambas:
+Pipeline completo, incluido el Auditor (Gemini), corrido de punta a punta
+contra el dataset de 27 empresas:
 
 ```
-OK  DVR200419828   KICKBACK_CIRCULAR   $1,467,192.40
-OK  FLS121103F19   KICKBACK_CIRCULAR   $1,489,880.94
-OK  HCZ181008TJY   SIN_MATERIALIDAD    $  819,709.95
-NO  KZR170308INT   (descartado)         — falso positivo del detector 4, limpiado solo
-OK  LCR12092415J   EFOS_69B            $1,697,425.10
-OK  XCG1911198RK   KICKBACK_CIRCULAR   $1,444,503.86
+CONFIRMADO  KZH161209V32   EFOS_69B              $2,245,374.00
+DESCARTADO  KZR170308INT   (sin evidencia referenciada)
+CONFIRMADO  LSM120111199   KICKBACK_CIRCULAR     $1,275,488.33
+CONFIRMADO  MRY1312186JL   INGRESO_NO_DECLARADO  $  847,961.06
+CONFIRMADO  MXZ220310ALK   KICKBACK_CIRCULAR     $  627,727.24
+CONFIRMADO  QXT121125K07   SIN_MATERIALIDAD      $  949,764.83
+CONFIRMADO  VRH22081728I   KICKBACK_CIRCULAR     $1,315,556.03
 
-~53s para 6 investigaciones · 0 falsas confirmaciones · 0 truncamientos
+6 confirmados · 1 descartado · $7,261,871.49 · 45-70s
+0 cifras/identificadores inventados en el expediente final (verificado contra fraud.db)
 ```
+
+Entre corridas, el número exacto de confirmados puede variar en ±1 (Qwen no es
+100% determinista turno a turno pese a `temperature=0` en el loop de
+herramientas); lo que no varía es que el Verificador nunca deja pasar un caso
+sin evidencia real — cuando algo falla, falla como descarte correcto, no como
+falsa confirmación.
 
 ## Limitaciones conocidas
 
 - El Investigador sigue un checklist fijo de 5 pasos en vez de "formar una
   teoría y cambiar de rumbo" de forma verdaderamente adaptativa — fue una
   decisión deliberada para ganar confiabilidad, a costa de flexibilidad.
-- Los 4 detectores de triage son heurísticas de texto/monto simples, no
+- Los 5 detectores de triage son heurísticas de texto/monto simples, no
   aprendizaje — por diseño, coinciden con lo que pide el brief ("simple
   detectors"), pero pueden dejar pasar esquemas de fraude que no se parezcan
-  a ninguno de los 4 patrones cableados.
-- `auditor.py` (Gemini) no se ha probado end-to-end en esta bitácora — la
-  bitácora cubre Fases 0-2 (ingesta, investigación, verificación).
+  a ninguno de los patrones cableados.
+- El frontend (`app.py`) no se ha probado con un usuario real subiendo un
+  archivo por la interfaz web — se verificó que arranca sin errores y que
+  consume el mismo generador que el CLI, pero falta la prueba manual completa
+  de principio a fin en el navegador.

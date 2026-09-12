@@ -7,6 +7,8 @@ networkx>=3.2
 # (pdf2image exige instalar poppler aparte, que en Windows es un dolor).
 pymupdf>=1.24
 pillow>=10.0
+# Frontend: todo en Python, sin HTML/CSS/JS -- ver app.py.
+streamlit>=1.60
 Faker>=25.0
 ollama>=0.4
 google-genai>=0.3
