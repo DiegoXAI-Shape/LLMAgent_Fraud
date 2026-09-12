@@ -1,0 +1,25 @@
+# Secretos -- NUNCA subir: contiene la API key real de Gemini
+.env
+
+# Entorno virtual
+venv/
+.venv/
+
+# Artefactos generados por el pipeline (se regeneran, no se versionan)
+fraud.db
+auditoria_empresa_input.xlsx
+giro_catalog.json
+CASE_FILE.md
+data/sat/_crudos/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

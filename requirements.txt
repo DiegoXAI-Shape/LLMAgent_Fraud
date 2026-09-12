@@ -1,0 +1,7 @@
+pandas>=2.2
+openpyxl>=3.1
+networkx>=3.2
+Faker>=25.0
+ollama>=0.4
+google-genai>=0.3
+python-dotenv>=1.0
