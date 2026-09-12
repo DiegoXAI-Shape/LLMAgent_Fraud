@@ -457,6 +457,60 @@ su contenido.
 `match=None` sobre un uuid inventado, y en la corrida completa `QXT121125K07`
 pasó de fallar a confirmar `SIN_MATERIALIDAD` con $949,764.83 exactos.
 
+### 17. El RFC mal leído ya no pasa en silencio (revisa la conclusión de la 15)
+
+La entrada 15 cerró con que la visión no puede alimentar la base sin
+confirmación humana de los identificadores. Eso resolvía el riesgo pero mataba
+la demo: obliga a que un humano teclee cada RFC. La pregunta correcta no era
+"¿cómo hago que el modelo lea mejor?" sino **"¿cómo detecto con código que leyó
+mal?"** — el mismo principio que gobierna todo lo demás aquí.
+
+**La clave que se nos había pasado:** el último carácter de un RFC no es un dato
+más, es un **dígito verificador** calculado a partir de los otros once. Se
+comprueba con aritmética, sin catálogo y sin red. Ya estaba ahí desde el
+principio, dentro del propio dato.
+
+`core/rfc.py` implementa dos capas independientes:
+
+1. **Dígito verificador** (`rfc_valido`) — aritmética pura sobre el RFC.
+2. **Vecino más cercano** (`sugerir_rfc`) — distancia de edición ≤ 2 contra el
+   universo conocido: las 27 entidades del caso + los 11,631 RFCs reales del
+   listado 69-B que ya teníamos cargados.
+
+**Medición contra los 11,631 RFCs reales del SAT:**
+
+```
+pasan el dígito verificador : 11,606  (99.79%)
+no pasan                    :     25  (0.21%)
+```
+
+Errores de un carácter simulados sobre RFCs válidos: **detecta el 84.65%.**
+
+**Sobre el caso real de la entrada 15:**
+
+| RFC | checksum | conocido | veredicto |
+|---|---|---|---|
+| `ADSR51130N5A` (lo que leyó Qwen) | **falla** | no | no confiable — "debería terminar en 8, no en A" |
+| `ADR531130N5A` (el real) | pasa | no | confiable |
+
+**Las dos capas no son redundantes.** En la prueba se corrompió un RFC real del
+69-B (`AAA120730823` → `AAAX20730823`) y el error **sí pasó el checksum por
+casualidad** — dentro del 15% que se le escapa. La búsqueda por cercanía lo
+cachó igual y sugirió el RFC correcto. Cada capa agarra lo que a la otra se le
+va. Costo: 0.066s por RFC contra el universo completo.
+
+**Por qué el 0.21% obliga a un diseño específico:** 25 RFCs publicados por el
+propio SAT no pasan su propio dígito verificador. Por eso `revisar_rfc_leido`
+**nunca descarta** un RFC por su cuenta: devuelve `confiable=False` y lo manda a
+revisión. Rechazar automáticamente convertiría un error de lectura en algo
+peor — perder una empresa que sí está realmente listada.
+
+**Resultado:** el falso negativo silencioso deja de ser silencioso. El sistema
+ya no contesta "no está en la lista" sobre un RFC que nunca existió; contesta
+"este RFC no cuadra, ¿quisiste decir `ADR531130N5A`?". La confirmación humana
+pasa de ser obligatoria en cada campo a ser la excepción, solo donde el código
+levantó la mano.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
