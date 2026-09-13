@@ -290,30 +290,88 @@ def verify_service_materiality(rfc: str, invoice_uuid: str) -> dict:
     return dict(evaluaciones[0], invoice_uuid=invoice_uuid)
 
 
+def _descripciones_que_emite(rfc: str) -> list[str]:
+    """Lo que la empresa VENDE, según sus propias facturas emitidas.
+
+    El giro de un contribuyente está escrito en sus propios libros: si todas sus
+    facturas como emisor dicen "servicios de transporte de carga", a eso se
+    dedica. No hace falta un catálogo externo para saberlo.
+    """
+    conn = _readonly_connection()
+    try:
+        filas = conn.execute(
+            "SELECT DISTINCT ii.descripcion FROM invoice_items ii "
+            "JOIN invoices i ON i.uuid = ii.invoice_uuid "
+            "WHERE i.emisor_rfc = ? LIMIT 50",
+            (rfc,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return [fila["descripcion"] for fila in filas if fila["descripcion"]]
+
+
+def _razon_social_de(rfc: str) -> str | None:
+    conn = _readonly_connection()
+    try:
+        fila = conn.execute("SELECT razon_social FROM entities WHERE rfc = ?", (rfc,)).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    return fila["razon_social"] if fila else None
+
+
 def _evaluar_concepto(rfc: str, concepto: str) -> dict:
-    """Compara un concepto contra el giro registrado del RFC.
+    """Compara un concepto contra el giro del RFC.
 
     Marca falta de materialidad (match=False) solo cuando se cumplen LAS DOS
-    condiciones: el concepto no corresponde al giro registrado Y además es un
-    concepto genérico sin entregable verificable. Comprar un servicio específico
-    fuera del giro propio es operación normal y no se marca.
+    condiciones: el concepto no corresponde al giro Y además es un concepto
+    genérico sin entregable verificable. Comprar un servicio específico fuera
+    del giro propio es operación normal y no se marca.
+
+    DE DÓNDE SALE EL GIRO, y por qué hay dos fuentes: antes solo se leía de
+    `giro_catalog.json`, que genera nuestro propio generador de datos. Eso
+    dejaba el esquema MUERTO en datos de un tercero — se midió: el triage sí
+    nominaba a la empresa fachada de un dataset ajeno, pero la herramienta
+    devolvía `match=None` ("el RFC no tiene giro registrado"), y como
+    `_verify_materialidad` exige `False` para confirmar, el caso se descartaba
+    SIEMPRE. Dos de los cinco esquemas gastaban una investigación completa del
+    modelo para terminar en nada.
+
+    El respaldo es más robusto y además más defendible ante un auditor: el giro
+    se infiere de lo que la propia empresa FACTURA. Su historial dice a qué se
+    dedica. Si no ha emitido nada, entonces sí es honesto decir que no se puede
+    evaluar.
     """
     catalog = _load_giro_catalog()
     entry = catalog.get(rfc)
 
-    if entry is None:
-        return {
-            "rfc": rfc,
-            "concepto": concepto,
-            "match": None,
-            "razon": "El RFC no tiene un giro registrado en el catálogo; no se puede evaluar materialidad.",
-        }
+    if entry is not None:
+        razon_social = entry["razon_social"]
+        giro = entry["giro"]
+        descripciones = entry["descripciones_esperadas"]
+    else:
+        descripciones = _descripciones_que_emite(rfc)
+        if not descripciones:
+            return {
+                "rfc": rfc,
+                "concepto": concepto,
+                "match": None,
+                "razon": (
+                    f"{rfc} no tiene giro en el catálogo ni facturas emitidas en el "
+                    "expediente, así que no hay con qué contrastar el concepto."
+                ),
+            }
+        razon_social = _razon_social_de(rfc) or rfc
+        giro = "inferido de su propio historial de facturación"
 
     concepto_norm = _normalizar(concepto)
 
     palabras_giro = {
         palabra
-        for descripcion in entry["descripciones_esperadas"]
+        for descripcion in descripciones
         for palabra in _normalizar(descripcion).split()
         if len(palabra) > 4 and palabra not in _STOPWORDS_GIRO
     }
@@ -323,18 +381,18 @@ def _evaluar_concepto(rfc: str, concepto: str) -> dict:
     match = corresponde_al_giro or not es_generico
 
     if corresponde_al_giro:
-        razon = f"El concepto corresponde al giro registrado ({entry['giro']})."
+        razon = f"El concepto corresponde al giro ({giro})."
     elif not es_generico:
         razon = (
-            f"El concepto ('{concepto}') es ajeno al giro de {entry['razon_social']} "
-            f"({entry['giro']}), pero describe un servicio específico y verificable: "
+            f"El concepto ('{concepto}') es ajeno al giro de {razon_social} "
+            f"({giro}), pero describe un servicio específico y verificable: "
             "no constituye por sí solo falta de materialidad."
         )
     else:
+        muestra = ", ".join(sorted(set(descripciones))[:3])
         razon = (
             f"El concepto facturado ('{concepto}') es genérico y sin entregable verificable, "
-            f"y además no corresponde al giro registrado de {entry['razon_social']} "
-            f"({entry['giro']}: {', '.join(entry['descripciones_esperadas'])})."
+            f"y además no corresponde al giro de {razon_social} ({giro}: {muestra})."
         )
 
     return {"rfc": rfc, "concepto": concepto, "match": match, "razon": razon}

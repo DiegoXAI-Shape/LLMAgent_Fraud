@@ -969,6 +969,66 @@ sobre un PRESUNTO la imputación de EFOS **no se sostiene**.
 Verificado después: las tres preguntas salen limpias, admitiendo que no hubo
 descartados y citando el UUID real con el monto exacto.
 
+### 25. Dos de los cinco esquemas estaban muertos en datos de un tercero
+
+Buscando qué más podía fallar con datos ajenos apareció un hueco silencioso.
+`verify_service_materiality` leía el giro de cada empresa de
+`giro_catalog.json`, un archivo que **solo escribe nuestro propio generador de
+datos**. Medido sobre un dataset de terceros con una empresa fachada sembrada:
+
+```
+giro_catalog.json conoce 26 RFC (los del demo), no al sembrado
+el triage SÍ lo nominó  (detector 4, coincidencia de texto)
+verify_service_materiality -> match = None
+    "El RFC no tiene un giro registrado en el catálogo"
+```
+
+Como `_verify_materialidad` exige `match is False` para confirmar, `None` nunca
+confirma: **`SIN_MATERIALIDAD` y `EMPRESA_FACHADA` eran imposibles de probar en
+cualquier dataset que no fuera el nuestro.** Y el daño era doble, porque el
+triage sí nominaba: el sistema gastaba una investigación completa del modelo en
+un caso que estaba condenado a descartar de antemano.
+
+**El arreglo: el giro sale de los propios libros.** Lo que una empresa factura
+dice a qué se dedica. Si todas sus facturas como emisor dicen "servicios de
+transporte de carga", ese es su giro — no hace falta un catálogo externo para
+saberlo. `_descripciones_que_emite` lo lee de `invoice_items`, y el catálogo se
+conserva como fuente preferente para no cambiar el comportamiento del dataset de
+demostración. Además es más defendible ante un auditor: *su propio historial
+dice a qué se dedica*.
+
+**Medición después del cambio:**
+
+```
+DATOS AJENOS (sin catálogo)
+  emite: "Servicios de transporte de carga terrestre"
+  recibe: "Consultoría estratégica en fusiones y adquisiciones" por $780,000
+  -> match=False -> CONFIRMADO_CON_PRUEBA $780,000.00     (antes: imposible)
+
+DEMOSTRACIÓN (con catálogo)
+  QXT121125K07 -> match=False -> CONFIRMADO $949,764.83   (idéntico a antes)
+
+SIN HISTORIAL DE EMISIÓN
+  -> match=None, "no hay con qué contrastar el concepto"  (se abstiene, correcto)
+```
+
+**Lo que importaba conservar.** En la misma corrida, dos empresas que reciben
+*"Consultoría en sistemas de información"* siguen dando `match=True`: el
+concepto es ajeno a su giro pero **describe un servicio específico y
+verificable**, así que no se marca. Esa discriminación costó trabajo construirla
+(entrada 5) y el arreglo no la volvió un gatillo fácil — aflojar la cobertura
+sin aflojar el estándar de prueba era exactamente el punto.
+
+### El sistema se calla cuando no hay nada
+
+En la misma tanda se probó algo que nunca se había medido: **libros limpios**,
+sin ningún fraude sembrado. El triage nominó **0 RFC**. No hubo investigación,
+no hubo acusaciones, no hubo narrativa inventada para justificar el esfuerzo.
+
+Es un resultado corto pero vale registrarlo: un detector que siempre encuentra
+algo no sirve de nada. Que el sistema no diga nada cuando no hay nada que decir
+es la otra mitad de *"probar antes de acusar"*.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
