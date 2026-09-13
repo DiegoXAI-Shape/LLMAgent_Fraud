@@ -730,6 +730,23 @@ modo lectura porque hoy se leen de `config.py` al importar. Ponerles un
 deslizador que no afecta nada sería justo la clase de fachada que este proyecto
 existe para no construir.
 
+**Detalle operativo que se repite: hay que reiniciar el servidor tras tocar
+`core/`.** Streamlit recarga los *scripts* cuando cambian (`app.py`, las
+páginas), pero **no reimporta los módulos** que ya tiene en `sys.modules`. Si se
+edita `core/pipeline.py` con el servidor encendido, la interfaz sigue llamando a
+la versión vieja y aparecen errores que no corresponden al código en disco. El
+caso real que costó tiempo:
+
+```
+TypeError: ejecutar_pipeline() got an unexpected keyword argument 'guardar_historial'
+```
+
+…con el parámetro claramente presente en el archivo, y un `import` en un proceso
+nuevo aceptándolo sin problema. No era un bug del proyecto y no se arreglaba
+editando nada: el servidor llevaba encendido desde antes del cambio. Se mata
+(`Ctrl+C`) y se vuelve a levantar. Conviene recordarlo antes de perder tiempo
+depurando un fantasma.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
