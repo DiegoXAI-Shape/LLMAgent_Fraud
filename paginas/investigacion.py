@@ -38,6 +38,16 @@ with st.sidebar:
         "Investigar un RFC específico", placeholder="opcional",
         help="Si se deja vacío, el sistema elige a quién investigar con sus propios detectores.",
     )
+    pista = st.text_area(
+        "Pista del auditor",
+        placeholder="opcional — p. ej. «sospecho que hay ingresos que no se facturaron»",
+        height=90,
+        help=(
+            "Texto libre. Orienta al Investigador sobre dónde mirar primero, pero NO "
+            "cuenta como evidencia: si los registros no la respaldan, el agente lo dice "
+            "y concluye según lo que encuentre en la base."
+        ),
+    )
     st.divider()
     boton_correr = st.button("Iniciar investigación", type="primary", width="stretch")
 
@@ -128,6 +138,7 @@ if boton_correr:
         for evento in ejecutar_pipeline(
             ruta_entrada, rfcs=rfcs_filtro, model=modelo,
             guardar_historial=st.session_state.get("guardar_historial", True),
+            pista=pista.strip() or None,
         ):
             fase, estado = evento["fase"], evento["estado"]
             barra.progress(PESO_FASE.get(fase, 0.0))

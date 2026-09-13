@@ -65,6 +65,7 @@ def ejecutar_pipeline(
     rfcs: list[str] | None = None,
     model: str = config.OLLAMA_MODEL,
     guardar_historial: bool = True,
+    pista: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Corre Ingesta -> Investigador -> Verificador -> Auditor, reportando cada paso.
 
@@ -96,7 +97,7 @@ def ejecutar_pipeline(
     borradores = []
     for rfc in rfcs_a_investigar:
         yield {"fase": "investigador", "estado": "progreso", "mensaje": f"investigando {rfc}"}
-        borrador = investigator.run_tool_loop(rfc, client=cliente_ollama, model=model)
+        borrador = investigator.run_tool_loop(rfc, client=cliente_ollama, model=model, pista=pista)
         borradores.append(borrador)
         yield {"fase": "investigador", "estado": "parcial", "datos": {"rfc": rfc, "borrador": borrador}}
     yield {"fase": "investigador", "estado": "ok", "datos": {"n_borradores": len(borradores)}}

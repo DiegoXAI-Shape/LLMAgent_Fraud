@@ -21,9 +21,11 @@ def main() -> None:
     parser.add_argument("--model", default=config.OLLAMA_MODEL, help="Modelo local (Ollama) para el Investigador")
     parser.add_argument("--rfc", action="append", default=None,
                          help="RFC específico a investigar (repetible). Si se omite, investiga todos los es_empresa_auditada.")
+    parser.add_argument("--pista", default=None,
+                         help="Pista en texto libre para el Investigador (sospecha, NO evidencia).")
     args = parser.parse_args()
 
-    for evento in ejecutar_pipeline(args.archivo, rfcs=args.rfc, model=args.model):
+    for evento in ejecutar_pipeline(args.archivo, rfcs=args.rfc, model=args.model, pista=args.pista):
         fase, estado = evento["fase"], evento["estado"]
 
         if fase == "ingesta":

@@ -284,13 +284,49 @@ def _identificadores_citados(evidencia: list[dict]) -> list[str]:
     return citados
 
 
-def run_tool_loop(rfc: str, client: ollama.Client | None = None, model: str = OLLAMA_MODEL) -> dict[str, Any]:
+def _instruccion_inicial(rfc: str, pista: str | None) -> str:
+    """El encargo que recibe el Investigador, con la pista del auditor si la hay.
+
+    El brief del reto plantea el problema como *"given a company's books and only
+    the hint that something is wrong"*: la pista es parte del enunciado, no un
+    extra. Pero una pista es una SOSPECHA, no una prueba, y ahí está todo el
+    riesgo de esta función.
+
+    Si se le entregara como un hecho ("el auditor detectó ingresos no
+    declarados"), el modelo trataría de confirmarla y buscaría cómo darle la
+    razón — que es precisamente la conducta que este proyecto existe para
+    impedir. Se le entrega marcada como no verificada y con la instrucción
+    explícita de contradecirla si los registros no la respaldan.
+
+    El comportamiento deseable, y el que conviene enseñar frente a un auditor: si
+    alguien escribe "creo que esta empresa es culpable" y la base no lo sostiene,
+    la respuesta correcta es decir que no se sostiene.
+    """
+    encargo = f"Investiga al RFC {rfc} y determina si hay evidencia de fraude fiscal."
+    if not (pista or "").strip():
+        return encargo
+
+    return (
+        f"{encargo}\n\n"
+        "PISTA DEL AUDITOR (sospecha humana, NO verificada, NO es evidencia):\n"
+        f"\"{pista.strip()}\"\n\n"
+        "Úsala solo para decidir qué mirar primero. NO la des por cierta y NO la "
+        "cites como prueba. Si los registros no la respaldan, dilo abiertamente y "
+        "concluye según lo que SÍ encuentres en la base — contradecir la pista es "
+        "una respuesta válida y correcta. Todas las reglas anteriores siguen "
+        "vigentes: sigues sin poder citar un identificador que no hayas visto en el "
+        "resultado de una herramienta."
+    )
+
+
+def run_tool_loop(rfc: str, client: ollama.Client | None = None, model: str = OLLAMA_MODEL,
+                  pista: str | None = None) -> dict[str, Any]:
     if client is None:
         client = ollama.Client(host=OLLAMA_HOST)
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Investiga al RFC {rfc} y determina si hay evidencia de fraude fiscal."},
+        {"role": "user", "content": _instruccion_inicial(rfc, pista)},
     ]
     identificadores_vistos: set[str] = set()
     correcciones = 0
@@ -370,14 +406,15 @@ def run_tool_loop(rfc: str, client: ollama.Client | None = None, model: str = OL
     return _default_lead(rfc, "Se alcanzó el número máximo de iteraciones sin una conclusión del modelo.")
 
 
-def run_investigation(rfcs: list[str] | None = None, model: str = OLLAMA_MODEL) -> list[dict[str, Any]]:
+def run_investigation(rfcs: list[str] | None = None, model: str = OLLAMA_MODEL,
+                      pista: str | None = None) -> list[dict[str, Any]]:
     if rfcs is None:
         rfcs = get_candidate_rfcs()
 
     client = ollama.Client(host=OLLAMA_HOST)
     borradores = []
     for rfc in rfcs:
-        borradores.append(run_tool_loop(rfc, client=client, model=model))
+        borradores.append(run_tool_loop(rfc, client=client, model=model, pista=pista))
     return borradores
 
 
