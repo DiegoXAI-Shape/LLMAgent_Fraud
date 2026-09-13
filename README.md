@@ -834,6 +834,66 @@ pregunta.
 
 Ninguna de las dos piezas agregó una sola dependencia nueva.
 
+### 23. El sistema era ciego a las empresas chicas
+
+La pregunta que lo destapó: *"si le meto casos nuevos, ¿el modelo realmente sabe
+identificar el truco, o solo funciona con los datos que ya probamos?"*. El
+criterio #1 del brief es justamente ese — *"en registros que nunca ha visto"* —
+y hasta aquí todo se había probado contra el mismo dataset que nosotros
+generamos.
+
+**La medición.** Se sembró la misma empresa con los mismos tres fraudes (EFOS,
+anillo de dinero, depósito sin factura) a tres escalas de monto, y se midió si
+el TRIAGE los nominaba. El triage es la puerta: si no nomina al RFC culpable, el
+modelo nunca lo investiga. Resultado con los umbrales absolutos originales:
+
+```
+escala 1.00  (anillo $805,807 · depósito $907,986)  ->  3 de 3
+escala 0.20  (anillo $168,702 · depósito $215,597)  ->  3 de 3
+escala 0.05  (anillo  $34,468 · depósito  $50,989)  ->  1 de 3
+```
+
+A escala chica el triage nominó **un solo RFC**. Sobrevivió únicamente el
+detector del listado 69-B, que es un `JOIN` y no compara montos; el anillo y el
+depósito quedaron debajo de `MIN_CICLO_MONTO` ($50,000) y
+`MIN_INGRESO_SIN_FACTURA` ($200,000). Una pantalla casi vacía, indistinguible de
+"aquí no hay fraude": el falso negativo silencioso otra vez, ahora en el triage.
+
+Y un detalle que conviene no pasar por alto: a escala 0.20 el depósito pasó por
+**7% de margen** ($215,597 contra $200,000). Estaba pasando de panzazo, no por
+diseño.
+
+**La causa de fondo** es que "un monto grande" no significa lo mismo para un
+corporativo que para una PyME. Los umbrales ahora son **percentiles de los
+movimientos reales de la empresa auditada** (`tools.umbral_monto_movimientos`),
+con un piso absoluto chico para el caso degenerado de poquísimos movimientos.
+Medición después del cambio:
+
+```
+escala 1.00  ->  3 de 3   (umbral de ciclo calculado: $220,659)
+escala 0.20  ->  3 de 3   (umbral de ciclo calculado:  $44,805)
+escala 0.05  ->  3 de 3   (umbral de ciclo calculado:  $14,529)
+```
+
+El umbral se mueve solo por un factor de ~15 entre escalas. Y la prueba de
+regresión importaba tanto como la de cobertura: **sobre el dataset de
+demostración el triage sigue nominando exactamente los mismos 7 RFC**. Aflojar
+un umbral es fácil; aflojarlo sin inundar el sistema de falsos positivos es el
+punto.
+
+**El acoplamiento que había que respetar.** `MIN_INGRESO_SIN_FACTURA` lo usaban
+DOS módulos: el triage para nominar y `verifier._verify_ingreso_no_declarado`
+para confirmar. Cambiar solo el triage habría hecho que el sistema seleccionara
+casos que él mismo descarta después. Por eso ambos llaman ahora a la misma
+función `tools.umbral_ingreso_sin_factura()` en vez de leer una constante cada
+uno — la misma lección que originó `config.py`, aplicada a un umbral que ya no
+es una constante sino un cálculo.
+
+**Para datos propios** se agregó `plantilla_entrada.xlsx`: las 5 hojas
+canónicas con una fila de ejemplo y una hoja de instrucciones que dice qué
+columnas son obligatorias. La hoja `Lista_69B` puede ir vacía — los 11,631 RFC
+reales del SAT ya viven en la base y no se borran con las ingestas.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

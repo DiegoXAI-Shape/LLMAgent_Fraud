@@ -103,21 +103,31 @@ st.divider()
 # --- Umbrales (lectura) ---
 st.subheader("Umbrales de detección")
 st.caption(
-    "Se muestran en modo lectura: se leen de `config.py` al arrancar. Para cambiarlos "
-    "hay que editar ese archivo y reiniciar — se prefiere eso a un control que aparente "
-    "hacer algo sin hacerlo."
+    "Los dos umbrales de monto son **relativos al caso cargado**: se calculan como un "
+    "percentil de los movimientos bancarios de esa empresa, no como una cifra fija en "
+    "pesos. Así el mismo código sirve para un corporativo y para una PyME. La columna "
+    "de valor muestra a cuántos pesos equivalen ahora mismo. Se presentan en modo "
+    "lectura porque se leen de `config.py` al arrancar: un control que aparente hacer "
+    "algo sin hacerlo sería peor que no tenerlo."
 )
+
+try:
+    from core import tools as _tools
+    _umbral_ciclo = f"${_tools.umbral_ciclo_monto():,.2f}"
+    _umbral_ingreso = f"${_tools.umbral_ingreso_sin_factura():,.2f}"
+except Exception:
+    _umbral_ciclo = _umbral_ingreso = "(sin datos cargados)"
 
 st.dataframe(
     [
-        {"Parámetro": "MIN_CICLO_MONTO", "Valor": f"${config.MIN_CICLO_MONTO:,.2f}",
-         "Qué hace": "Monto mínimo del tramo más chico de un ciclo de dinero para tomarlo en cuenta."},
+        {"Parámetro": "PERCENTIL_CICLO_MONTO", "Valor": f"p{config.PERCENTIL_CICLO_MONTO:.0%} → {_umbral_ciclo}",
+         "Qué hace": "El tramo más chico de un ciclo debe superar este percentil de los movimientos DE ESTA empresa. Relativo, no en pesos fijos."},
         {"Parámetro": "MAX_RATIO_MONTO_CICLO", "Valor": f"{config.MAX_RATIO_MONTO_CICLO}",
          "Qué hace": "Qué tanto pueden diferir los tramos de un ciclo. Sin esto, el comercio normal genera decenas de 'ciclos' falsos."},
         {"Parámetro": "MIN_DISCREPANCIA_PAGO", "Valor": f"${config.MIN_DISCREPANCIA_PAGO:,.2f}",
-         "Qué hace": "Diferencia mínima entre lo facturado y lo pagado para marcar la factura."},
-        {"Parámetro": "MIN_INGRESO_SIN_FACTURA", "Valor": f"${config.MIN_INGRESO_SIN_FACTURA:,.2f}",
-         "Qué hace": "Monto mínimo de un depósito recibido sin CFDI para marcarlo como ingreso no declarado."},
+         "Qué hace": "Diferencia mínima entre lo facturado y lo pagado. Es un umbral de redondeo, no de escala, por eso sigue absoluto."},
+        {"Parámetro": "PERCENTIL_INGRESO_SIN_FACTURA", "Valor": f"p{config.PERCENTIL_INGRESO_SIN_FACTURA:.0%} → {_umbral_ingreso}",
+         "Qué hace": "Un depósito sin CFDI debe superar este percentil. Más alto que el de ciclos porque la señal es más ruidosa."},
         {"Parámetro": "MAX_ITERATIONS", "Valor": f"{config.MAX_ITERATIONS}",
          "Qué hace": "Turnos máximos del loop de herramientas del Investigador por cada RFC."},
         {"Parámetro": "CONTEXT_WINDOW", "Valor": f"{config.CONTEXT_WINDOW:,}",

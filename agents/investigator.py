@@ -15,9 +15,7 @@ from config import (
     MAX_CORRECCIONES_EVIDENCIA,
     MAX_ITERATIONS,
     MAX_OUTPUT_TOKENS,
-    MIN_CICLO_MONTO,
     MIN_DISCREPANCIA_PAGO,
-    MIN_INGRESO_SIN_FACTURA,
     OLLAMA_HOST,
     OLLAMA_MODEL,
 )
@@ -190,7 +188,7 @@ def get_candidate_rfcs() -> list[str]:
         candidatos.add(fila["emisor_rfc"])
         candidatos.add(fila["receptor_rfc"])
 
-    for ciclo in tools.find_money_cycles(min_amount=MIN_CICLO_MONTO, max_hops=8):
+    for ciclo in tools.find_money_cycles(min_amount=tools.umbral_ciclo_monto(), max_hops=8):
         candidatos.update(ciclo["ciclo_rfcs"])
 
     # 4to detector, fuera de los 3 que lista el brief: conceptos vagos sin
@@ -217,7 +215,7 @@ def get_candidate_rfcs() -> list[str]:
     # do not match invoices": aquí el pago no coincide con NINGUNA factura.
     ingresos_sin_factura = tools.query_database(
         "SELECT DISTINCT cuenta_destino_rfc AS rfc FROM bank_ledger "
-        f"WHERE cfdi_uuid IS NULL AND monto >= {MIN_INGRESO_SIN_FACTURA}"
+        f"WHERE cfdi_uuid IS NULL AND monto >= {tools.umbral_ingreso_sin_factura()}"
     )
     candidatos.update(row["rfc"] for row in ingresos_sin_factura)
 

@@ -10,7 +10,15 @@ from typing import Any
 
 import networkx as nx
 
-from config import DB_PATH, GIRO_CATALOG_PATH, MAX_RATIO_MONTO_CICLO
+from config import (
+    DB_PATH,
+    GIRO_CATALOG_PATH,
+    MAX_RATIO_MONTO_CICLO,
+    PERCENTIL_CICLO_MONTO,
+    PERCENTIL_INGRESO_SIN_FACTURA,
+    PISO_CICLO_MONTO,
+    PISO_INGRESO_SIN_FACTURA,
+)
 
 _giro_catalog_cache: dict[str, dict] | None = None
 
@@ -113,6 +121,76 @@ def find_money_cycles(min_amount: float, max_hops: int,
             })
 
     return resultado
+
+
+def umbral_monto_movimientos(percentil: float, piso: float) -> float:
+    """Un umbral en pesos calibrado a ESTE dataset, no a pesos absolutos.
+
+    POR QUÉ EXISTE: los umbrales del proyecto eran cifras fijas
+    (`$50,000` para un ciclo de dinero, `$200,000` para un depósito sin
+    factura). Estaban calibradas contra el dataset de demostración, donde los
+    movimientos normales van de $8,000 a $450,000. Se midió qué pasa con los
+    mismos fraudes a otra escala, sembrando la misma empresa tres veces con
+    montos proporcionalmente menores:
+
+        escala 1.00  (anillo $805,807, depósito $907,986)  ->  3 de 3 detectados
+        escala 0.20  (anillo $168,702, depósito $215,597)  ->  3 de 3 detectados
+        escala 0.05  (anillo  $34,468, depósito  $50,989)  ->  1 de 3 detectados
+
+    A la escala chica solo sobrevivió el detector del listado 69-B, que es un
+    JOIN y no compara montos. El anillo y el depósito quedaron por debajo del
+    umbral y el triage nominó un único RFC — una pantalla casi vacía, idéntica
+    a "aquí no hay fraude". Ese es el peor modo de falla posible en un sistema
+    forense: un falso negativo que no se distingue de una revisión limpia.
+
+    El problema de fondo es que "un monto grande" no significa lo mismo para un
+    corporativo que para una PyME. Esta función responde a "grande PARA ESTA
+    EMPRESA": toma el percentil indicado de los montos que realmente se mueven
+    en `bank_ledger`, así que el mismo código se ajusta solo a los libros que
+    le toquen.
+
+    El `piso` es una red contra el caso degenerado: con poquísimos movimientos
+    o montos minúsculos, un percentil puede caer tan bajo que todo pase el
+    filtro y el triage nomine a media base. Se devuelve el mayor de los dos.
+    """
+    conn = _readonly_connection()
+    try:
+        montos = [
+            float(fila[0])
+            for fila in conn.execute("SELECT monto FROM bank_ledger WHERE monto IS NOT NULL")
+        ]
+    except sqlite3.Error:
+        return piso
+    finally:
+        conn.close()
+
+    if not montos:
+        return piso
+
+    montos.sort()
+    # Percentil por posición, sin interpolar: basta para calibrar un filtro y
+    # evita traer una dependencia solo para esto.
+    indice = min(int(percentil * len(montos)), len(montos) - 1)
+    return max(montos[indice], piso)
+
+
+def umbral_ciclo_monto() -> float:
+    """Umbral del tramo más chico de un ciclo, calibrado a este dataset."""
+    return umbral_monto_movimientos(PERCENTIL_CICLO_MONTO, PISO_CICLO_MONTO)
+
+
+def umbral_ingreso_sin_factura() -> float:
+    """Umbral de un depósito sin CFDI, calibrado a este dataset.
+
+    El triage (`investigator.get_candidate_rfcs`) y el verificador
+    (`verifier._verify_ingreso_no_declarado`) llaman LOS DOS a esta función, y
+    esa es la razón de que exista en vez de repetir el cálculo. Si el triage
+    nominara con un umbral y el verificador exigiera otro, el sistema
+    seleccionaría casos que después descarta él mismo — el mismo tipo de
+    desincronización silenciosa que motivó centralizar los umbrales en
+    `config.py`.
+    """
+    return umbral_monto_movimientos(PERCENTIL_INGRESO_SIN_FACTURA, PISO_INGRESO_SIN_FACTURA)
 
 
 def check_sat_blacklist(rfc: str) -> dict:

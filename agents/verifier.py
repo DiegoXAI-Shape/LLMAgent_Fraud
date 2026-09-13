@@ -15,7 +15,6 @@ Dos responsabilidades:
 
 from typing import Any
 
-from config import MIN_INGRESO_SIN_FACTURA
 from core import tools
 from core.db import get_connection
 
@@ -210,16 +209,19 @@ def _verify_materialidad(rfc_imputado: str, invoices_referenciadas: list[dict]) 
 
 
 def _verify_ingreso_no_declarado(rfc_imputado: str, transfers_referenciadas: list[dict]) -> tuple[bool, str]:
+    # El MISMO umbral que usa el triage para nominar. Si aquí se exigiera otro,
+    # el sistema seleccionaría casos que luego descarta él solo.
+    umbral = tools.umbral_ingreso_sin_factura()
     for transferencia in transfers_referenciadas:
         if transferencia["cuenta_destino_rfc"] != rfc_imputado:
             continue
         if transferencia["cfdi_uuid"] is not None:
             continue
-        if float(transferencia["monto"]) >= MIN_INGRESO_SIN_FACTURA:
+        if float(transferencia["monto"]) >= umbral:
             return True, ""
     return False, (
         f"No se encontró una transferencia recibida por {rfc_imputado} sin CFDI asociado "
-        f"por al menos ${MIN_INGRESO_SIN_FACTURA:,.2f}."
+        f"por al menos ${umbral:,.2f} (umbral calibrado a los movimientos de este caso)."
     )
 
 
