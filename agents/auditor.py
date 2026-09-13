@@ -38,7 +38,23 @@ Responde ÚNICAMENTE con el Markdown del expediente, sin comentarios adicionales
 
 
 def _client() -> genai.Client:
-    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    """Cliente de Gemini. Lanza RuntimeError si no hay llave configurada.
+
+    Antes esto hacía `os.environ["GEMINI_API_KEY"]` directo, lo que produce un
+    `KeyError` crudo. Ese error se lanzaba ANTES del bloque de reintentos de
+    `generate_case_file`, así que tumbaba el pipeline entero en la fase 4 en vez
+    de caer a la plantilla determinista — exactamente el modo de falla que la
+    bitácora 19 existía para evitar, pero por una causa distinta (llave
+    faltante en vez de servicio caído). Cualquiera que clonara el repo sin un
+    `.env` se topaba con eso.
+    """
+    clave = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not clave:
+        raise RuntimeError(
+            "No hay GEMINI_API_KEY configurada (revisa el archivo .env). "
+            "El expediente se redactará con la plantilla determinista."
+        )
+    return genai.Client(api_key=clave)
 
 
 def _format_confirmados(confirmados: list[dict[str, Any]]) -> str:
@@ -203,7 +219,14 @@ def generate_case_file(
     # ninguna referencia viva: Python lo recolecta y cierra su sesión HTTP a
     # media llamada, y los tres intentos fallan con "the client has been closed"
     # aunque la API esté perfectamente disponible.
-    client = _client()
+    #
+    # Y va dentro de un try: si no hay llave o el cliente no se puede construir,
+    # eso NO debe tumbar una investigación que ya está terminada y verificada.
+    try:
+        client = _client()
+    except Exception as exc:
+        print(f"Aviso: no se pudo inicializar el Auditor ({exc})")
+        return redactar_sin_modelo(confirmados, descartados), "plantilla"
 
     # Un 503/429 de Gemini es transitorio por definición ("high demand"), así que
     # se reintenta con espera creciente antes de rendirse.

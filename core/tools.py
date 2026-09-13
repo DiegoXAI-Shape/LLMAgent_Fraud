@@ -14,6 +14,7 @@ from config import (
     DB_PATH,
     GIRO_CATALOG_PATH,
     MAX_RATIO_MONTO_CICLO,
+    MIN_NODOS_CICLO,
     PERCENTIL_CICLO_MONTO,
     PERCENTIL_INGRESO_SIN_FACTURA,
     PISO_CICLO_MONTO,
@@ -98,7 +99,11 @@ def find_money_cycles(min_amount: float, max_hops: int,
 
     resultado = []
     for ciclo in nx.simple_cycles(graph, length_bound=max_hops):
-        if len(ciclo) < 2:
+        # Menos de 3 nodos NO es round-tripping: "A me paga y yo le pago" es
+        # comercio bilateral normal. Ver MIN_NODOS_CICLO en config.py -- esta
+        # línea exigía 2 y producía falsas acusaciones de lavado sobre pares de
+        # empresas que simplemente se venden entre sí.
+        if len(ciclo) < MIN_NODOS_CICLO:
             continue
         tramos = []
         for i in range(len(ciclo)):

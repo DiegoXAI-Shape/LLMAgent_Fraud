@@ -894,6 +894,81 @@ canónicas con una fila de ejemplo y una hoja de instrucciones que dice qué
 columnas son obligatorias. La hoja `Lista_69B` puede ir vacía — los 11,631 RFC
 reales del SAT ya viven en la base y no se borran con las ingestas.
 
+### 24. Punta a punta con datos nunca vistos: tres fallas que solo salen así
+
+La entrada 23 midió el TRIAGE a distintas escalas. Faltaba lo otro: correr el
+pipeline COMPLETO sobre una empresa fabricada con otra semilla, otra escala
+(0.31, que no era ninguna de las probadas), otros RFC y un proveedor 69-B real
+elegido al azar — y después interrogar al Defensor sobre ESE caso. Es la
+simulación de lo que pasa en la demostración.
+
+**El resultado principal, que era la pregunta de fondo del proyecto:**
+
+```
+sembrado EFOS_69B              CDT2003026R7  ->  CONFIRMADO  $151,879.20
+sembrado KICKBACK_CIRCULAR     WSJ220919GY3  ->  CONFIRMADO  $361,183.96
+sembrado INGRESO_NO_DECLARADO  ZDX1512040SV  ->  CONFIRMADO  $170,310.88
+
+3 de 3 encontrados Y probados · 36.2s · Gemini caído, expediente entregado igual
+```
+
+Pero la corrida destapó tres fallas que el dataset de demostración nunca habría
+mostrado.
+
+**Falla 1 — se acusaba de lavado a empresas que solo se venden entre sí.** De 7
+casos confirmados, 2 eran un par recíproco (`FKX1808265N9 ⇄ QJP210912JVL`,
+ratio 1.119, $99,721 y $111,612) salido de las transferencias NORMALES del
+generador. `find_money_cycles` aceptaba ciclos de 2 nodos, y "A me paga y yo le
+pago" es el patrón de comercio inocente más común que existe. El round-tripping
+real necesita al menos un intermediario para disfrazar el origen del dinero —
+eso es su definición, no una heurística. Se exige `MIN_NODOS_CICLO = 3`.
+
+En el dataset de demostración esto nunca había aparecido, pero por **suerte
+estadística**: con 20 empresas y 50 transferencias aleatorias, un par recíproco
+con montos parecidos es poco probable, no imposible. Es exactamente el tipo de
+falso positivo que golpea el criterio de Judgment del brief — *"¿se niega a
+acusar a proveedores que no puede respaldar?"*.
+
+Tras el arreglo: los 3 fraudes sembrados siguen encontrándose, el par inocente
+desaparece (de 7 confirmados a 5), y en el dataset de demostración el triage
+sigue nominando **los mismos 7 RFC** con su anillo de 3 nodos intacto.
+
+**Falla 2 — una llave faltante tumbaba el pipeline entero.** `_client()` hacía
+`os.environ["GEMINI_API_KEY"]` y se llamaba FUERA del bloque de reintentos, así
+que un `KeyError` mataba la fase 4 en vez de caer a la plantilla. Cualquiera que
+clonara el repo sin `.env` se topaba con eso — el mismo modo de falla de la
+bitácora 19, por una causa distinta. Verificado: sin llave, el expediente se
+genera igual y **conserva el monto exacto y el RFC**.
+
+**Falla 3 — mis propias guardas marcaban en rojo respuestas correctas.** Al
+interrogar al Defensor sobre este caso nuevo aparecieron dos alertas falsas:
+
+- `_contradice_expediente` marcó *"en esta corrida no hubo leads descartados; el
+  expediente solo imputó a KZH161209V32"* como contradicción. La negación estaba
+  en la oración ANTERIOR, del otro lado del punto y coma. Ahora la ventana se
+  recorta en `.`, `;` y `:`.
+- La guarda de identificadores marcó como inventado un RFC que **el auditor
+  había escrito en su propia pregunta**, y que el modelo citó de vuelta para
+  decir correctamente que no existe en la base. Ahora los identificadores de la
+  pregunta se siembran como "vistos".
+
+Una alerta roja sobre una respuesta buena es **peor que no tener alerta**:
+frente a un auditor desacredita justo lo que sí se sostiene. 8 de 8 en pruebas
+unitarias tras el recorte, conservando los tres casos de negación real.
+
+**Falla 4, de contenido — el Defensor inventaba exoneraciones.** Con la lista de
+descartados vacía, a la pregunta *"¿por qué no acusaste a las demás?"* fabricaba
+razones legales para empresas que nunca fueron leads, y llegó a decir que un
+proveedor era *"solo presunta"* cuando su propia respuesta anterior lo había
+declarado DEFINITIVO. Dos medidas: una regla que obliga a responder "los
+detectores no la señalaron como pista" en vez de inventar, y
+`_contradice_situacion_69b`, que contrasta contra la base la situación que el
+texto afirma (5 de 5 en pruebas unitarias). La distinción no es cosmética:
+sobre un PRESUNTO la imputación de EFOS **no se sostiene**.
+
+Verificado después: las tres preguntas salen limpias, admitiendo que no hubo
+descartados y citando el UUID real con el monto exacto.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

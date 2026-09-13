@@ -304,6 +304,13 @@ for intercambio in st.session_state["interrogatorio"]:
                 f"({', '.join(intercambio['contradice_expediente'])}). El dictamen válido es "
                 "el del expediente, no el de esta explicación.", icon="🚨",
             )
+        if intercambio.get("contradice_registros"):
+            st.error(
+                "Esta respuesta declara una situación en el listado 69-B distinta a la "
+                f"registrada: {'; '.join(intercambio['contradice_registros'])}. La "
+                "distinción importa: sobre un PRESUNTO la imputación de EFOS no se sostiene.",
+                icon="🚨",
+            )
         if intercambio.get("herramientas_usadas"):
             with st.expander(f"Consultó {len(intercambio['herramientas_usadas'])} vez/veces la base"):
                 for llamada in intercambio["herramientas_usadas"]:

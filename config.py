@@ -48,6 +48,22 @@ PISO_CICLO_MONTO = 1_000.0
 # Es una PROPORCIÓN, así que ya era independiente de la escala.
 MAX_RATIO_MONTO_CICLO = 1.3
 
+# Nodos mínimos de un ciclo de dinero para considerarlo round-tripping.
+#
+# TRES, no dos. Un "ciclo" de dos nodos (A paga a B, B paga a A, por montos
+# parecidos) es el patrón de comercio inocente más común que existe: dos
+# empresas que se venden cosas mutuamente. El round-tripping real necesita al
+# menos un intermediario para disfrazar el origen del dinero — esa es su
+# definición, no una heurística.
+#
+# Se descubrió probando con datos que el sistema nunca había visto: de 7 casos
+# confirmados, 2 eran un par recíproco salido de transferencias normales
+# (ratio 1.119, $99,721 y $111,612). El sistema los acusó de lavado. En el
+# dataset de demostración nunca había pasado, pero por suerte estadística: con
+# 20 empresas y 50 transferencias aleatorias, un par recíproco con montos
+# parecidos es poco probable — no imposible.
+MIN_NODOS_CICLO = 3
+
 # Diferencia mínima entre lo facturado y lo pagado para marcar la factura. Un
 # peso: no es un umbral de escala sino de redondeo, así que se queda absoluto.
 MIN_DISCREPANCIA_PAGO = 1.0

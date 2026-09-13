@@ -68,6 +68,15 @@ REGLAS INQUEBRANTABLES:
 4. Responde en español, directo y breve: de 2 a 5 oraciones. Quien te pregunta tiene
    segundos, no minutos. Cita el identificador o el monto exacto que respalda lo que dices.
 5. No uses viñetas ni encabezados. Es una respuesta hablada ante un auditor.
+6. Si te preguntan por una empresa que NO aparece ni en confirmados ni en descartados,
+   di exactamente eso: que los detectores no la señalaron como pista y por lo tanto no se
+   investigó. NO inventes una razón de exoneración para una empresa que nunca fue un lead.
+   Y si la lista de descartados viene vacía, dilo tal cual: "en esta corrida no hubo leads
+   descartados".
+7. Si mencionas la situación de un RFC en el listado 69-B, tiene que ser la que devuelva
+   la herramienta `check_sat_blacklist`, no la que te parezca razonable. Decir "presunto"
+   de una empresa que el SAT declaró DEFINITIVO (o al revés) cambia por completo si la
+   imputación se sostiene, y te contradice con el resto del expediente.
 
 El estándar de prueba que aplicó el verificador, por si te preguntan:
 - EFOS_69B: alguna factura citada tiene una contraparte con situación DEFINITIVO en el
@@ -134,6 +143,51 @@ _NEGACIONES = (
 _VENTANA_NEGACION = 140
 
 
+_PALABRAS_PRESUNTO = ("presunt",)
+_PALABRAS_DEFINITIVO = ("definitiv",)
+_VENTANA_SITUACION = 180
+
+
+def _contradice_situacion_69b(respuesta: str) -> list[str]:
+    """RFC sobre los que la respuesta declara una situación 69-B que no es la registrada.
+
+    Nace de una falla real: en una prueba el Defensor dijo que un proveedor era
+    "solo presunta" cuando el SAT lo tiene como DEFINITIVO — y su propia
+    respuesta anterior lo había dicho bien. La distinción no es cosmética: un
+    PRESUNTO todavía puede desvirtuarse, así que sobre él la imputación de
+    EFOS_69B NO se sostiene. Decirlo al revés frente a un auditor destruye el
+    caso o inventa uno.
+
+    `_contradice_expediente` no podía atraparlo porque solo vigila a los RFC
+    imputados, y aquí el RFC es una CONTRAPARTE. Esta función consulta la
+    situación real en la base y la compara con lo que el texto afirma.
+    """
+    texto = respuesta.lower()
+    rfcs = set(_RFC_PATTERN.findall(respuesta))
+    if not rfcs:
+        return []
+
+    conflictivos: list[str] = []
+    for rfc in sorted(rfcs):
+        info = tools.check_sat_blacklist(rfc)
+        if not info["en_lista_69b"]:
+            continue
+        situacion = str(info["situacion"] or "").upper()
+        for coincidencia in re.finditer(re.escape(rfc.lower()), texto):
+            inicio = max(0, coincidencia.start() - _VENTANA_SITUACION)
+            fin = min(len(texto), coincidencia.end() + _VENTANA_SITUACION)
+            ventana = texto[inicio:fin]
+            dice_presunto = any(p in ventana for p in _PALABRAS_PRESUNTO)
+            dice_definitivo = any(d in ventana for d in _PALABRAS_DEFINITIVO)
+            if situacion == "DEFINITIVO" and dice_presunto and not dice_definitivo:
+                conflictivos.append(f"{rfc} (el SAT lo tiene como DEFINITIVO, la respuesta dice presunto)")
+                break
+            if situacion == "PRESUNTO" and dice_definitivo and not dice_presunto:
+                conflictivos.append(f"{rfc} (el SAT lo tiene como PRESUNTO, la respuesta dice definitivo)")
+                break
+    return conflictivos
+
+
 def _contradice_expediente(respuesta: str, confirmados: list[dict]) -> list[str]:
     """RFC que el expediente confirmó pero que la respuesta presenta como no imputados.
 
@@ -157,6 +211,15 @@ def _contradice_expediente(respuesta: str, confirmados: list[dict]) -> list[str]
         for coincidencia in re.finditer(re.escape(rfc.lower()), texto):
             inicio = max(0, coincidencia.start() - _VENTANA_NEGACION)
             previo = texto[inicio:coincidencia.start()]
+            # La negación solo cuenta si está en la MISMA oración que el RFC.
+            # Sin este recorte, una respuesta correcta como "en esta corrida no
+            # hubo leads descartados; el expediente solo imputó a X" se marcaba
+            # como contradicción: la negación pertenecía a la oración anterior,
+            # del otro lado del punto y coma. Una alerta roja sobre una
+            # respuesta buena es peor que no tener alerta, porque frente a un
+            # auditor desacredita justo lo que sí se sostiene.
+            for frontera in (".", ";", ":"):
+                previo = previo.rsplit(frontera, 1)[-1]
             if any(negacion in previo for negacion in _NEGACIONES):
                 contradichos.append(rfc)
                 break
@@ -181,6 +244,12 @@ def responder_pregunta(
 
     texto_caso = _formatear_caso(confirmados, descartados)
     vistos = _identificadores_del_caso(texto_caso)
+    # Un identificador que el AUDITOR escribió en su pregunta no lo inventó el
+    # modelo. Citarlo de vuelta para responder "ese RFC no existe en la base" es
+    # exactamente la conducta que se busca; marcarla como alucinación castigaba
+    # la respuesta honesta.
+    vistos.update(_UUID_PATTERN.findall(pregunta))
+    vistos.update(_RFC_PATTERN.findall(pregunta))
 
     mensajes: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -238,6 +307,7 @@ def responder_pregunta(
                 "herramientas_usadas": herramientas_usadas,
                 "identificadores_inventados": [],
                 "contradice_expediente": _contradice_expediente(contenido, confirmados),
+                "contradice_registros": _contradice_situacion_69b(contenido),
             }
 
         if correcciones >= MAX_CORRECCIONES:
@@ -248,6 +318,7 @@ def responder_pregunta(
                 "herramientas_usadas": herramientas_usadas,
                 "identificadores_inventados": inventados,
                 "contradice_expediente": _contradice_expediente(contenido, confirmados),
+                "contradice_registros": _contradice_situacion_69b(contenido),
             }
 
         correcciones += 1
@@ -266,6 +337,7 @@ def responder_pregunta(
         "herramientas_usadas": herramientas_usadas,
         "identificadores_inventados": [],
         "contradice_expediente": [],
+        "contradice_registros": [],
     }
 
 
