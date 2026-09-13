@@ -1398,6 +1398,64 @@ después:  5 de 5 intentos correctos, en cada uno llamando query_database
 Suite: 29 pruebas (4 nuevas, incluida la reconstrucción literal de la captura
 de pantalla que reportó el hallazgo).
 
+### 32. El Defensor inventó una relación entre dos empresas que no existía
+
+Otro hallazgo del navegador, distinto al de la entrada 31. Pregunta: *"¿Alguno
+de los casos involucra a la misma empresa dos veces?"* Respuesta:
+
+```
+"...LSM120111199 aparece en dos tramos del mismo ciclo de kickback: una
+transferencia que emite $647,761.09 a VRH22081728I y otra que recibe
+$647,761.09 de VRH22081728I."
+```
+
+Describe **dos** transferencias distintas con el **mismo monto exacto** —
+sospechoso de entrada. Se reconstruyó el anillo real por SQL directo contra
+`bank_ledger`:
+
+```
+LSM120111199 -> MXZ220310ALK   $627,727.24
+VRH22081728I -> LSM120111199   $647,761.09
+MXZ220310ALK -> VRH22081728I   $667,794.94
+```
+
+El segundo tramo real de LSM es con **MXZ220310ALK** a $627,727.24 — no una
+segunda transacción con VRH. El monto que citó ($647,761.09) sí es real y sí
+es de LSM, así que la guarda de la entrada 31 no lo atrapaba: no hay ningún
+monto mal emparejado a nivel de caso, hay una **contraparte inventada** a
+nivel de transacción específica. El modelo tomó el único número real que tenía
+a la mano y lo duplicó para completar un patrón, en vez de reconocer que el
+segundo tramo iba con un tercer RFC distinto.
+
+**El arreglo es el mismo patrón que la regla 8, aplicado a relaciones en vez de
+montos**: regla 9 en el prompt, instruyendo consultar `bank_ledger` por SQL
+para cualquier pregunta sobre con quién se relaciona un RFC, en vez de
+reconstruir la red de pagos de memoria.
+
+**Resultado, con matices — vale ser honesto en vez de declarar victoria.** Tras
+el cambio, el modelo **dejó de inventar la relación falsa** en 3 de 3
+intentos — pero también cambió de estrategia: en vez de intentar reconstruir
+qué RFC comparte una transacción con cuál (la pregunta original, más rica),
+contestó una versión más segura y verificable: consultó `investigation_cases`
+agrupado por `rfc_imputado` y respondió *"ninguno se repite dos veces como
+imputado"* — cierto, verificado por SQL, pero no la respuesta más informativa
+posible.
+
+Se documenta así, sin dorarlo, porque es la prioridad correcta para el
+criterio de Judgment: una respuesta corta y verdadera vale más que una
+detallada y falsa. El modelo dejó de alucinar; no se volvió más elocuente. Si
+un juez hace una pregunta de relación muy específica en la demostración, lo
+esperable es una respuesta conservadora y correcta, no necesariamente la
+reconstrucción completa del grafo de pagos en prosa.
+
+No se construyó una guarda de código para esta clase de error (a diferencia de
+la entrada 31): verificar contrapartes específicas por transacción exige
+cruzar cada UUID citado contra su `origen_rfc`/`destino_rfc` real, y dado el
+tiempo restante antes de la demostración, se priorizó verificar que el
+prompt-fix funciona y no rompe nada, sobre construir una segunda red de
+seguridad de código para un caso ya mitigado. Queda anotado como mejora futura
+si el proyecto continúa después del hackathon.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
