@@ -1342,6 +1342,62 @@ acusar, y el agente la ignoró porque los datos no la sostenían. La B confirma
 que la pista sí ayuda a orientar la búsqueda cuando coincide con la realidad,
 sin cambiar el monto ni inventar evidencia nueva para justificarla.
 
+### 31. El Defensor mezcló el monto de un caso con el esquema de otro
+
+Encontrado probando el interrogatorio en el navegador, no en un script mío.
+Ante *"What is the case with the highest amount?"*, el Defensor respondió:
+
+```
+"...VRH22081728I..., with 2,245,374.00 MXN per EFOS_69B scheme.
+1,315,556.03 MXN por ciclo de kickback circular. El segundo caso más
+alto es KZH161209V32..., con [se cortó ahí]"
+```
+
+Los hechos reales: `KZH161209V32` es EFOS_69B con $2,245,374.00; `VRH22081728I`
+es KICKBACK_CIRCULAR con $1,315,556.03. La respuesta le atribuyó a VRH el
+esquema y el monto de KZH. **Ningún número estaba inventado** — los dos son
+reales y existen en el expediente — pero quedaron mal emparejados. La guarda de
+identificadores (bitácora 22) no lo atrapaba porque solo vigila que un UUID o
+RFC citado exista; aquí ambos existían, solo estaban cruzados.
+
+**Reproducido 5 de 5 veces** con la misma pregunta contra datos reales: en cada
+intento el modelo comparó los montos "a ojo" desde el texto del expediente y
+se equivocó de una forma distinta — un intento incluso eligió un RFC que **ni
+siquiera era el segundo más alto** (`LSM120111199`, $1,275,488.33, cuando
+`VRH22081728I` con $1,315,556.03 le gana). Comparar varias cifras en prosa es
+justo el tipo de tarea en la que un modelo de 4B parámetros no es confiable.
+
+**Dos arreglos, uno enseña y otro protege:**
+
+1. **Regla 8 en el prompt**: para cualquier pregunta de ranking o comparación,
+   instruye usar `query_database` contra `investigation_cases`
+   (`ORDER BY monto_total_evidencia DESC`) en vez de comparar en prosa.
+   `investigation_cases` se llena en cada corrida sin importar el flag de
+   historial, así que el dato siempre está disponible por SQL.
+2. **`_monto_no_corresponde_al_rfc`**: red de seguridad para cuando, de todos
+   modos, se equivoca. Construye el mapa real *RFC → sus propios montos* (total
+   + cada partida de evidencia) y su inverso *monto → a quién pertenece de
+   verdad*; si un monto citado junto a un RFC resulta ser el de OTRO RFC
+   confirmado, lo marca. No es semántica, es aritmética simple, y solo marca
+   cruces comprobables — un monto que no coincide con nada conocido no se
+   marca, porque pudo salir de una consulta legítima que no está en la lista
+   precalculada.
+
+**Verificación, en dos partes.** La guarda, aislada, atrapó el texto exacto de
+la falla real **en las dos direcciones** (a KZH se le atribuyó el monto de
+VRH, y viceversa), y no marcó ninguna de tres respuestas correctas de pruebas
+anteriores. La regla del prompt, probada con una corrida real (investigación
+completa, no simulada) y la misma pregunta que había fallado:
+
+```
+antes:    0 de 5 intentos correctos (comparación en prosa)
+después:  5 de 5 intentos correctos, en cada uno llamando query_database
+          con ORDER BY monto_total_evidencia DESC
+```
+
+Suite: 29 pruebas (4 nuevas, incluida la reconstrucción literal de la captura
+de pantalla que reportó el hallazgo).
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

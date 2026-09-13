@@ -322,6 +322,13 @@ for intercambio in st.session_state["interrogatorio"]:
                 "distinción importa: sobre un PRESUNTO la imputación de EFOS no se sostiene.",
                 icon="🚨",
             )
+        if intercambio.get("monto_mal_emparejado"):
+            st.error(
+                "Esta respuesta mezcla montos entre dos casos distintos: "
+                f"{'; '.join(intercambio['monto_mal_emparejado'])}. Comparar varias cifras en "
+                "prosa es donde el modelo local suele fallar — verifica con la tabla de arriba.",
+                icon="🚨",
+            )
         if intercambio.get("herramientas_usadas"):
             with st.expander(f"Consultó {len(intercambio['herramientas_usadas'])} vez/veces la base"):
                 for llamada in intercambio["herramientas_usadas"]:

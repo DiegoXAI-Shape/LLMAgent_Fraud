@@ -19,7 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
-from agents.defensor import _contradice_expediente, _contradice_situacion_69b
+from agents.defensor import (
+    _contradice_expediente,
+    _contradice_situacion_69b,
+    _monto_no_corresponde_al_rfc,
+)
 
 HAY_BASE = config.DB_PATH.exists()
 
@@ -107,6 +111,61 @@ class DeclararMalLaSituacion69B(unittest.TestCase):
 
     def test_rfc_fuera_del_listado_no_dispara(self):
         self.assertFalse(_contradice_situacion_69b("La empresa AAA010101AAA no aparece en ningun listado."))
+
+
+class MontoDeUnCasoAtribuidoAOtro(unittest.TestCase):
+    """Dos casos reales, con sus números intercambiados por el modelo.
+
+    Nació de una falla real, encontrada probando la interfaz en el navegador:
+    ante "¿cuál es el caso con el monto más alto?", el Defensor le atribuyó a
+    VRH22081728I (KICKBACK_CIRCULAR, $1,315,556.03) el monto y el esquema de
+    KZH161209V32 (EFOS_69B, $2,245,374.00). Reproducido 5 de 5 veces contra el
+    modelo local con la misma pregunta: comparar varias cifras en prosa es
+    justo el tipo de tarea en la que un modelo chico falla. Ninguno de los dos
+    números estaba inventado — la guarda de identificadores no lo atrapaba.
+    """
+
+    CONFIRMADOS = [
+        {"rfc_imputado": "KZH161209V32", "monto_total_evidencia": 2245374.00,
+         "evidencia": [{"monto": 1684780.56}, {"monto": 560593.44}]},
+        {"rfc_imputado": "VRH22081728I", "monto_total_evidencia": 1315556.03,
+         "evidencia": [{"monto": 647761.09}, {"monto": 667794.94}]},
+    ]
+
+    def _detecta(self, texto: str) -> list[str]:
+        return _monto_no_corresponde_al_rfc(texto, self.CONFIRMADOS)
+
+    def test_atrapa_la_falla_real_tal_como_ocurrio(self):
+        # Reconstruido de la captura de pantalla real del interrogatorio.
+        texto = (
+            "The case with the highest amount is VRH22081728I, with 2,245,374.00 MXN "
+            "per EFOS_69B scheme. 1,315,556.03 MXN por ciclo de kickback circular. "
+            "El segundo caso más alto es KZH161209V32, con"
+        )
+        resultado = self._detecta(texto)
+        self.assertTrue(resultado)
+        # Se detecta en las dos direcciones: a cada RFC se le atribuyó el
+        # monto del otro.
+        self.assertTrue(any("KZH161209V32" in r for r in resultado))
+        self.assertTrue(any("VRH22081728I" in r for r in resultado))
+
+    def test_el_monto_correcto_junto_a_su_propio_rfc_no_dispara(self):
+        texto = "VRH22081728I fue confirmado con $1,315,556.03 MXN por kickback circular."
+        self.assertFalse(self._detecta(texto))
+
+    def test_el_error_de_ranking_no_confunde_esta_guarda(self):
+        # Un monto que SÍ pertenece a su propio RFC, aunque la afirmación de
+        # que es "el más alto" sea falsa (LSM no es el máximo de la lista) —
+        # ese es un error de comparación, no de emparejamiento, y lo corrige
+        # la regla 8 del prompt (usar SQL), no esta guarda.
+        texto = "El monto mas alto es el del RFC LSM120111199 con $1,275,488.33 MXN."
+        confirmados_con_lsm = self.CONFIRMADOS + [
+            {"rfc_imputado": "LSM120111199", "monto_total_evidencia": 1275488.33, "evidencia": []},
+        ]
+        self.assertFalse(_monto_no_corresponde_al_rfc(texto, confirmados_con_lsm))
+
+    def test_sin_confirmados_no_revienta(self):
+        self.assertEqual(_monto_no_corresponde_al_rfc("cualquier texto con $100.00", []), [])
 
 
 if __name__ == "__main__":

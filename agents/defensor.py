@@ -77,6 +77,14 @@ REGLAS INQUEBRANTABLES:
    la herramienta `check_sat_blacklist`, no la que te parezca razonable. Decir "presunto"
    de una empresa que el SAT declaró DEFINITIVO (o al revés) cambia por completo si la
    imputación se sostiene, y te contradice con el resto del expediente.
+8. Si te preguntan cuál caso tiene el monto MÁS ALTO/MÁS BAJO, cuántos casos hay de un
+   esquema, o cualquier comparación entre dos o más montos, NUNCA los compares "a ojo"
+   desde el texto del expediente — comparar varios números en prosa es exactamente el
+   tipo de cosa en la que te equivocas. Usa SIEMPRE `query_database` contra la tabla
+   `investigation_cases`, por ejemplo:
+   `SELECT rfc_imputado, tipo_esquema, monto_total_evidencia FROM investigation_cases
+    WHERE estatus_dictamen='CONFIRMADO_CON_PRUEBA' ORDER BY monto_total_evidencia DESC`
+   y responde con el resultado real de esa consulta, no con tu propia comparación.
 
 El estándar de prueba que aplicó el verificador, por si te preguntan:
 - EFOS_69B: alguna factura citada tiene una contraparte con situación DEFINITIVO en el
@@ -185,6 +193,82 @@ def _contradice_situacion_69b(respuesta: str) -> list[str]:
             if situacion == "PRESUNTO" and dice_definitivo and not dice_presunto:
                 conflictivos.append(f"{rfc} (el SAT lo tiene como PRESUNTO, la respuesta dice definitivo)")
                 break
+    return conflictivos
+
+
+_RE_MONTO = re.compile(r"(?:\$\s*)?(\d{1,3}(?:,\d{3})*\.\d{2})(?:\s*MXN)?")
+_VENTANA_MONTO = 120
+
+
+def _monto_no_corresponde_al_rfc(respuesta: str, confirmados: list[dict]) -> list[str]:
+    """Un monto citado junto a un RFC que en realidad pertenece a OTRO caso.
+
+    Nace de una falla real, medida contra el modelo local: a "¿cuál es el caso
+    con el monto más alto?" el Defensor le atribuyó a VRH22081728I
+    (KICKBACK_CIRCULAR, $1,315,556.03) el monto y el esquema de KZH161209V32
+    (EFOS_69B, $2,245,374.00). Reproducido 5 de 5 veces contra el mismo caso, y
+    en cada intento el modelo se equivocó de una forma distinta -- comparar
+    varias cifras en prosa es justo el tipo de tarea en la que un modelo chico
+    falla. La regla 8 del prompt le pide usar SQL en vez de comparar a ojo;
+    esta función es la red de seguridad para cuando, de todos modos, se
+    equivoca. Ninguno de los dos números estaba inventado -- solo mal
+    emparejados, y por eso la guarda de identificadores no lo atrapaba.
+
+    No es semántica, es aritmética simple: para cada RFC mencionado se buscan
+    cifras con forma de monto cerca de esa mención y se comparan contra los
+    montos REALES de ese RFC (su total y los de su propia evidencia). Solo se
+    marca cuando la cifra existe de verdad en el expediente pero pertenece a
+    OTRO RFC -- un monto que el modelo trajo de una consulta legítima y que
+    simplemente no está en esta lista precalculada NO se marca, para no
+    generar falsos positivos sobre datos que sí puede haber verificado con una
+    herramienta.
+    """
+    verdad: dict[str, set[float]] = {}
+    for lead in confirmados:
+        rfc = str(lead.get("rfc_imputado") or "").strip()
+        if not rfc:
+            continue
+        montos = verdad.setdefault(rfc, set())
+        total = lead.get("monto_total_evidencia")
+        if isinstance(total, (int, float)):
+            montos.add(round(float(total), 2))
+        for item in lead.get("evidencia") or []:
+            monto = item.get("monto")
+            if isinstance(monto, (int, float)):
+                montos.add(round(float(monto), 2))
+
+    if not verdad:
+        return []
+
+    dueno_real: dict[float, set[str]] = {}
+    for rfc, montos in verdad.items():
+        for monto in montos:
+            dueno_real.setdefault(monto, set()).add(rfc)
+
+    conflictivos: list[str] = []
+    vistos: set[str] = set()
+    for rfc in sorted(verdad):
+        for coincidencia in re.finditer(re.escape(rfc), respuesta):
+            if rfc in vistos:
+                break
+            inicio = max(0, coincidencia.start() - _VENTANA_MONTO)
+            fin = min(len(respuesta), coincidencia.end() + _VENTANA_MONTO)
+            ventana = respuesta[inicio:fin]
+            for cifra_texto in _RE_MONTO.findall(ventana):
+                try:
+                    cifra = round(float(cifra_texto.replace(",", "")), 2)
+                except ValueError:
+                    continue
+                if cifra in verdad[rfc]:
+                    continue
+                ajenos = dueno_real.get(cifra)
+                if ajenos and rfc not in ajenos:
+                    conflictivos.append(
+                        f"{rfc}: se le atribuye ${cifra:,.2f}, pero ese monto es de "
+                        f"{', '.join(sorted(ajenos))}"
+                    )
+                    vistos.add(rfc)
+                    break
     return conflictivos
 
 
@@ -308,6 +392,7 @@ def responder_pregunta(
                 "identificadores_inventados": [],
                 "contradice_expediente": _contradice_expediente(contenido, confirmados),
                 "contradice_registros": _contradice_situacion_69b(contenido),
+                "monto_mal_emparejado": _monto_no_corresponde_al_rfc(contenido, confirmados),
             }
 
         if correcciones >= MAX_CORRECCIONES:
@@ -319,6 +404,7 @@ def responder_pregunta(
                 "identificadores_inventados": inventados,
                 "contradice_expediente": _contradice_expediente(contenido, confirmados),
                 "contradice_registros": _contradice_situacion_69b(contenido),
+                "monto_mal_emparejado": _monto_no_corresponde_al_rfc(contenido, confirmados),
             }
 
         correcciones += 1
@@ -338,6 +424,7 @@ def responder_pregunta(
         "identificadores_inventados": [],
         "contradice_expediente": [],
         "contradice_registros": [],
+        "monto_mal_emparejado": [],
     }
 
 
