@@ -1232,6 +1232,74 @@ movimientos — porque la ingesta escribe dentro de una transacción que solo
 confirma al final. Vale registrarlo: un corte a media ingesta no deja la base a
 medias.
 
+### 29. Una columna opcional que faltaba tumbaba la ingesta entera
+
+Todos los datasets probados hasta esta entrada los generamos nosotros en el
+esquema canónico exacto. Faltaba lo que de verdad va a pasar: un Excel de un
+tercero, con sus propios nombres de hoja y columna. Se fabricó uno con hojas
+como `Catalogo de Clientes` y `Estado de Cuenta`, y columnas como `Clave RFC`,
+`R.F.C. del Emisor`, `Folio del Movimiento`.
+
+**La traducción funcionó bien en 5 de 6 columnas de la hoja `Entidades`** —
+incluso el modelo acertó mapeos nada obvios (`'Folio Fiscal (UUID)' ->
+uuid`, `'Concepto Facturado' -> descripcion`). Pero `'Sujeta a Revision'` no
+tenía sinónimo y el modelo tampoco la reconoció, y ahí apareció el problema:
+
+```
+ERROR DE INGESTA: Hoja 'Entidades': faltan columnas ['es_empresa_auditada']
+```
+
+`cargar_tabular` solo conservaba las columnas que sí logró mapear
+(`df[list(mapeo.values())]`), así que una columna huérfana desaparecía de la
+tabla por completo. `ingest.py` exige que la columna EXISTA (`_require_columns`)
+aunque su valor pueda faltar (`es_empresa_auditada` no está en
+`_require_non_null`) — y al no existir, tronaba la hoja entera. El fraude
+sembrado nunca llegó a investigarse: el sistema se negaba a trabajar por una
+columna que ni siquiera necesitaba, en el paso 0, antes de que el detective
+hiciera nada.
+
+**El arreglo obvio tenía una trampa.** Rellenar las columnas faltantes con
+`NaN` parecía suficiente, hasta revisar `_parse_bool`:
+
+```python
+if isinstance(value, (int, float)):
+    return int(bool(value))
+```
+
+`bool(float('nan'))` es `True` en Python — cualquier float distinto de `0.0`
+lo es. Rellenar con `NaN` sin tocar esto habría marcado **a todas las empresas
+del Excel ajeno como auditadas**, cambiando a quién investiga el sistema sin
+que nadie lo pidiera. El mismo patrón apareció en `monto_presunto_total`: el
+código hacía `row.get("monto_presunto_total", 0.0)`, y ese default **solo
+aplica cuando la clave falta por completo** — con la columna presente pero
+vacía, `.get()` devuelve el `NaN`, no el `0.0`, y `_parse_float(nan, ...)` no
+lanza error: guarda `NaN` en la base en silencio.
+
+**Los tres cambios, juntos:**
+
+1. `cargar_tabular` ahora rellena con `NaN` cualquier columna canónica que
+   ninguna hoja ajena traía, para que `ingest.py` vea la columna presente y
+   decida él si de verdad era obligatoria.
+2. `_parse_bool` trata `NaN`/`None` como `False` explícitamente, antes de
+   cualquier otro chequeo.
+3. `monto_presunto_total` se comprueba con `pd.isna()` antes del `.get()`, no
+   después.
+
+**Verificado sobre el mismo Excel ajeno que había fallado:**
+
+```
+[traduccion] columnas sin equivalente en el archivo, se dejan vacías: ['es_empresa_auditada']
+[ingesta]    entities: 16 · invoices: 29 · bank_ledger: 29
+triage nominó 1 RFC
+CONFIRMADO FBD100616RB4 (EFOS_69B) $468,339.20
+```
+
+El fraude sembrado (un EFOS_69B con proveedor real del listado del SAT) se
+encontró y se probó con el monto exacto, en un archivo que el sistema nunca
+había visto y con nombres que nunca había leído. Regresión sobre el dataset de
+demostración: los mismos 7 RFC nominados, 27 entidades — sin cambios. Suite:
+25 pruebas (2 nuevas, incluida la trampa del `NaN` que se lee como verdadero).
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

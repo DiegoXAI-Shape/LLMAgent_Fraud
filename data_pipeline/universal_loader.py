@@ -234,7 +234,23 @@ def cargar_tabular(ruta: Path, usar_modelo: bool = True) -> tuple[dict[str, pd.D
         for huerfana in huerfanas:
             reporte.append(f"      '{huerfana}' -> (sin identificar, se ignora)")
 
-        resultado[canonica] = df.rename(columns=mapeo)[list(mapeo.values())]
+        traducida = df.rename(columns=mapeo)[list(mapeo.values())]
+
+        # Columnas canónicas que ninguna hoja ajena traía y que ni el diccionario
+        # de sinónimos ni el modelo lograron ubicar. Sin esto, `ingest.py`
+        # truena con "faltan columnas" sobre TODA la hoja aunque la columna sea
+        # opcional -- se midió con un Excel real de un tercero: le faltó UNA
+        # columna (es_empresa_auditada) de seis, y la ingesta completa se negó
+        # a correr en vez de seguir con esa columna vacía. Se rellenan con NaN
+        # (pandas ya usa NaN para "sin dato"), y es tarea de ingest.py decidir
+        # si esa columna era realmente obligatoria (_require_non_null) o no.
+        faltantes = [c for c in ESQUEMA_CANONICO[canonica] if c not in traducida.columns]
+        for columna in faltantes:
+            traducida[columna] = pd.NA
+        if faltantes:
+            reporte.append(f"      columnas sin equivalente en el archivo, se dejan vacías: {faltantes}")
+
+        resultado[canonica] = traducida
 
     return resultado, reporte
 

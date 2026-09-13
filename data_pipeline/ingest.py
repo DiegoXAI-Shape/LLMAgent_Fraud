@@ -76,6 +76,14 @@ def _parse_float(value, sheet_name: str, columna: str, fila: int) -> float:
 
 
 def _parse_bool(value) -> int:
+    # NaN primero: `bool(float('nan'))` es True en Python (cualquier float
+    # distinto de 0.0 lo es), así que sin este chequeo una celda VACÍA se leía
+    # como "sí es empresa auditada". Esto importaba de verdad porque
+    # universal_loader ahora rellena con NaN las columnas canónicas que ninguna
+    # hoja ajena trae -- sin este fix, un Excel de un tercero marcaría a TODAS
+    # las empresas como auditadas.
+    if pd.isna(value):
+        return 0
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, (int, float)):
@@ -125,7 +133,13 @@ def build_blacklist_rows(df: pd.DataFrame) -> list[tuple]:
             str(row["rfc"]).strip(),
             situacion,
             _parse_date(row["publicacion_dof"], "Lista_69B", "publicacion_dof", i),
-            _parse_float(row.get("monto_presunto_total", 0.0), "Lista_69B", "monto_presunto_total", i),
+            # Mismo cuidado que con es_empresa_auditada: `.get(clave, 0.0)` NO
+            # usa el default si la columna EXISTE pero viene vacía (NaN) -- solo
+            # cuando la clave falta por completo. Con la columna rellenada por
+            # universal_loader, `float(nan)` pasaba sin error y guardaba NaN en
+            # la base en vez del 0.0 que este campo espera como "desconocido".
+            0.0 if pd.isna(row.get("monto_presunto_total"))
+            else _parse_float(row["monto_presunto_total"], "Lista_69B", "monto_presunto_total", i),
         ))
     return rows
 

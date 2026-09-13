@@ -23,10 +23,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pandas as pd
+
 import config
 from core.money_trail import construir_dot
 from core.report_pdf import construir_pdf
 from core.rfc import digito_verificador, rfc_valido
+from data_pipeline.ingest import _parse_bool
+from data_pipeline.universal_loader import cargar_tabular
 
 HAY_BASE = config.DB_PATH.exists()
 
@@ -94,6 +98,47 @@ class RastroDelDinero(unittest.TestCase):
     def test_evidencia_inexistente_se_ignora(self):
         lead = dict(self.LEAD, evidencia=[dict(self.LEAD["evidencia"][0], existe=False)])
         self.assertIsNone(construir_dot(lead))
+
+
+class ExcelDeUnTercero(unittest.TestCase):
+    """Una hoja ajena a la que le falta una columna OPCIONAL debe traducirse igual.
+
+    Falla real, medida con un Excel de un tercero con nombres de hoja y columna
+    completamente distintos: 'Sujeta a Revision' no tenía sinónimo y el modelo
+    no la mapeó. Como `cargar_tabular` solo conservaba las columnas que sí
+    logró mapear, la hoja 'Entidades' resultante no tenía la columna
+    `es_empresa_auditada` — que ni siquiera es obligatoria — e `ingest.py`
+    truena con "faltan columnas" sobre TODA la hoja. El fraude sembrado nunca
+    llegó a investigarse: el sistema se negaba a trabajar por una columna que
+    no necesitaba, en el paso 0, antes de que el detective hiciera nada.
+    """
+
+    def test_columna_opcional_faltante_se_rellena_en_vez_de_tumbar_la_hoja(self):
+        crudas = pd.DataFrame([{
+            "Clave RFC": "AAA010101AAA",
+            "Denominacion o Razon Social": "Empresa de Prueba SA de CV",
+            "C.P. del Domicilio": "64000",
+            # Sin equivalente de es_empresa_auditada -- a propósito.
+        }])
+        with tempfile.TemporaryDirectory() as carpeta:
+            ruta = Path(carpeta) / "Catalogo de Clientes.xlsx"
+            crudas.to_excel(ruta, sheet_name="Catalogo de Clientes", index=False)
+            hojas, reporte = cargar_tabular(ruta, usar_modelo=False)
+
+        self.assertIn("Entidades", hojas)
+        # La columna existe (para que ingest.py no truene), pero vacía: no se
+        # inventa un valor para un dato que el archivo nunca trajo.
+        self.assertIn("es_empresa_auditada", hojas["Entidades"].columns)
+        self.assertTrue(pd.isna(hojas["Entidades"].loc[0, "es_empresa_auditada"]))
+        self.assertTrue(any("es_empresa_auditada" in linea for linea in reporte))
+
+    def test_una_celda_vacia_no_se_lee_como_verdadera(self):
+        # bool(float('nan')) es True en Python -- por eso este chequeo es
+        # explícito y no un "obviamente funciona". Sin él, rellenar la columna
+        # faltante marcaría a TODAS las empresas del Excel ajeno como
+        # auditadas, cambiando a quién investiga el sistema.
+        self.assertEqual(_parse_bool(float("nan")), 0)
+        self.assertEqual(_parse_bool(pd.NA), 0)
 
 
 class ExpedienteEnPDF(unittest.TestCase):
