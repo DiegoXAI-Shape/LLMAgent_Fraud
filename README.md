@@ -669,6 +669,67 @@ frente a otra es la variabilidad ya conocida de Qwen entre corridas — ver
 "Estado actual" — no algo introducido por la refactorización). `app.py` se
 arrancó en modo headless y respondió `HTTP 200` sin errores de importación.
 
+### 21. Expediente en PDF, historial que sobrevive, y cuatro páginas
+
+Tres cosas que resolver de golpe: que la interfaz no se viera "de hackathon",
+que hubiera un PDF profesional descargable, y que las corridas anteriores no se
+perdieran.
+
+**El PDF no se arma leyendo el Markdown de Gemini.** Se arma desde los leads ya
+verificados — los mismos diccionarios que salieron de `verifier.py` con cada
+monto resuelto por SQL. De Gemini se toma solo la prosa narrativa. Las razones
+son dos y las dos pesan:
+
+- *Corrección.* Si el PDF se armara parseando el texto del modelo, cualquier
+  error suyo de formato se volvería un error en el documento firmado. Con los
+  datos estructurados, los montos y UUID del PDF vienen del mismo lugar que ya
+  se verificó contra la base.
+- *Consistencia.* Un LLM formatea distinto en cada corrida (a veces `###`, a
+  veces una tabla, a veces una lista). El documento sale idéntico siempre, y da
+  exactamente igual si lo redactó Gemini o la plantilla de respaldo.
+
+Verificado sobre un expediente de prueba: 5 páginas, portada con folio y
+recuadro de cifras, tabla resumen, una sección por caso con su cadena de
+evidencia, sección de descartados, numeración de página, y las 9
+comprobaciones de contenido (montos, UUID, acentos) en verde. Usa `fpdf2`
+porque es Python puro: `weasyprint` y `pdfkit` exigen binarios del sistema
+(GTK, wkhtmltopdf) que en Windows son una fuente de fallas justo el día de la
+demostración. La fuente se toma de las TTF del sistema, con degradación a la
+fuente interna si el repo se clona en otro sistema operativo.
+
+**El historial: un tercer ciclo de vida.** `investigation_cases` vive dentro de
+`SCHEMA_CASO_SQL`, así que **se borraba entera con cada ingesta** — cada corrida
+destruía los dictámenes de la anterior. La solución reusa el patrón que ya
+existía (entrada 12): la nueva tabla `expedientes_historial` vive en el esquema
+de REFERENCIA, el mismo que protege al catálogo del SAT y que nunca se borra.
+Dos decisiones deliberadas dentro de ella:
+
+1. **Sin llave foránea a `entities(rfc)`.** Las entidades del caso desaparecen
+   en la siguiente ingesta; una FK volvería imposible conservar el expediente de
+   una empresa auditada la semana pasada. Es el mismo motivo por el que
+   `sat_blacklist_69b.rfc` tampoco la tiene.
+2. **`payload_json` guarda los leads verificados completos.** Sin ese campo el
+   historial sería un recibo sin contenido; con él, el PDF se reimprime meses
+   después aunque los datos originales ya no estén en la base.
+
+Probado explícitamente: se guardó un expediente, se corrió `reset_case_data()`,
+y el expediente seguía ahí y se reimprimió en PDF sin pérdida de montos.
+
+**El Auditor ahora reporta quién redactó.** `generate_case_file` devuelve
+`(markdown, 'gemini' | 'plantilla')`. No es cosmético: el expediente se archiva,
+y hay que poder decir meses después si esa redacción salió del modelo o del
+respaldo. Ocultarlo haría que un documento redactado sin modelo se viera
+idéntico a uno redactado con él.
+
+**Cuatro páginas, y una regla para la de Configuración.** Investigación,
+Expedientes, Catálogo 69-B (con un validador de RFC en vivo que enseña el
+dígito verificador atrapando un error de lectura) y Configuración. En esta
+última, *solo se muestra como control lo que de verdad hace algo*: el modelo y
+el archivado son controles reales; los umbrales de detección se muestran en
+modo lectura porque hoy se leen de `config.py` al importar. Ponerles un
+deslizador que no afecta nada sería justo la clase de fachada que este proyecto
+existe para no construir.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

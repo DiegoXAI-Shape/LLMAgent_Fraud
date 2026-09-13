@@ -1,0 +1,24 @@
+# Tema de la interfaz. Streamlit por default se ve genérico y "de hackathon";
+# esto le da identidad visual sin una sola línea de HTML/CSS/JS.
+#
+# La paleta es deliberadamente sobria -- azul pizarra y grises fríos, no colores
+# saturados. El producto dictamina fraude fiscal: el tono visual tiene que
+# leerse como un informe pericial, no como una app de consumo. El único acento
+# fuerte (rojo) queda reservado para los casos confirmados, para que el ojo lo
+# asocie con "esto es un hallazgo", no con decoración.
+
+[theme]
+base = "light"
+primaryColor = "#1F4E79"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#1B2733"
+font = "sans serif"
+
+[server]
+# El expediente y los datasets pueden pesar; 50 MB cubre un Excel grande o un
+# PDF escaneado de varias páginas sin que el uploader falle en la demo.
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false

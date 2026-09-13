@@ -9,6 +9,10 @@ pymupdf>=1.24
 pillow>=10.0
 # Frontend: todo en Python, sin HTML/CSS/JS -- ver app.py.
 streamlit>=1.60
+# Expediente en PDF. fpdf2 es Python puro: no necesita binarios del sistema,
+# a diferencia de weasyprint (GTK) o pdfkit (wkhtmltopdf), que en Windows son
+# una fuente de fallas justo el día de la demostración.
+fpdf2>=2.8
 Faker>=25.0
 ollama>=0.4
 google-genai>=0.3

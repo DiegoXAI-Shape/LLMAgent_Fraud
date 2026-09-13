@@ -21,6 +21,35 @@ CREATE TABLE IF NOT EXISTS sat_blacklist_69b (
 );
 
 CREATE INDEX IF NOT EXISTS idx_blacklist_situacion ON sat_blacklist_69b(situacion);
+
+-- Historial de expedientes terminados. Vive en el esquema de REFERENCIA, no en
+-- el del caso, y esa es toda la razón por la que existe: `investigation_cases`
+-- se borra con cada ingesta nueva (está dentro de SCHEMA_CASO_SQL), así que
+-- hasta ahora cada corrida destruía los dictámenes de la anterior. Aquí no.
+--
+-- Dos decisiones deliberadas:
+--
+-- 1. NO hay FK a `entities(rfc)`. Las entidades del caso desaparecen en la
+--    siguiente corrida, así que una llave foránea volvería imposible conservar
+--    el expediente de una empresa auditada la semana pasada. Es el mismo
+--    motivo por el que `sat_blacklist_69b.rfc` tampoco la tiene.
+-- 2. `payload_json` guarda los leads ya verificados (montos, identificadores,
+--    evidencia) serializados. Con eso el expediente se puede volver a imprimir
+--    en PDF meses después, cuando los datos del caso original ya no estén en
+--    la base. Sin ese campo, el historial sería solo un recibo sin contenido.
+CREATE TABLE IF NOT EXISTS expedientes_historial (
+    expediente_id VARCHAR(36) PRIMARY KEY,
+    fecha_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    archivo_origen TEXT,
+    n_confirmados INTEGER NOT NULL,
+    n_descartados INTEGER NOT NULL,
+    monto_total DECIMAL(14,2) NOT NULL DEFAULT 0.0,
+    redactado_por TEXT CHECK(redactado_por IN ('gemini', 'plantilla')) NOT NULL,
+    markdown TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_historial_fecha ON expedientes_historial(fecha_hora);
 """
 
 # Datos del caso: la empresa que se está auditando AHORA MISMO. Esto SÍ se

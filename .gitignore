@@ -13,6 +13,10 @@ CASE_FILE.md
 traducido.xlsx
 prueba_jurado.xlsx
 data/sat/_crudos/
+# Expedientes en PDF que genera la interfaz. Se regeneran con un clic desde el
+# historial, y si alguien corrió un CFDI real por el sistema contienen los
+# datos de ese contribuyente -- no tienen por qué acabar en un repo público.
+expediente*.pdf
 
 # Documentos de prueba con datos personales reales -- NUNCA subir.
 # Son CFDI timbrados de verdad: traen RFC, CURP, NSS, cuenta bancaria y sueldo

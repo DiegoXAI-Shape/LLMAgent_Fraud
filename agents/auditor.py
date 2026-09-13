@@ -178,13 +178,23 @@ def redactar_sin_modelo(confirmados: list[dict[str, Any]],
     return "\n".join(partes)
 
 
-def generate_case_file(confirmados: list[dict[str, Any]], descartados: list[tuple[dict[str, Any], str]]) -> str:
+def generate_case_file(
+    confirmados: list[dict[str, Any]],
+    descartados: list[tuple[dict[str, Any], str]],
+) -> tuple[str, str]:
+    """Devuelve (markdown, quien_lo_redactó) con origen en {'gemini','plantilla'}.
+
+    El segundo valor no es cosmético: el expediente se archiva en el historial y
+    hay que poder decir, meses después, si esa redacción salió del Auditor o del
+    respaldo determinista. Ocultarlo haría que un documento redactado sin modelo
+    se viera idéntico a uno redactado con él.
+    """
     if not confirmados and not descartados:
         return (
             "# Expediente Forense de Fraude Fiscal\n\n"
             "No se investigó ningún RFC en esta corrida (no hay empresas marcadas "
             "como `es_empresa_auditada` en fraud.db).\n"
-        )
+        ), "plantilla"
 
     prompt = build_prompt(confirmados, descartados)
 
@@ -208,7 +218,7 @@ def generate_case_file(confirmados: list[dict[str, Any]], descartados: list[tupl
                 ),
             )
             if response.text:
-                return response.text
+                return response.text, "gemini"
             print(f"Aviso: Gemini respondió vacío (intento {intento}).")
         except Exception as exc:
             print(f"Aviso: falló la llamada a Gemini (intento {intento}/{MAX_REINTENTOS_GEMINI}): {exc}")
@@ -217,7 +227,7 @@ def generate_case_file(confirmados: list[dict[str, Any]], descartados: list[tupl
 
     print("Aviso: el Auditor (Gemini) no está disponible; se redacta el expediente "
           "con la plantilla determinista. Los hechos verificados son los mismos.")
-    return redactar_sin_modelo(confirmados, descartados)
+    return redactar_sin_modelo(confirmados, descartados), "plantilla"
 
 
 def save_case_file(markdown_text: str, path: Path = CASE_FILE_PATH) -> Path:

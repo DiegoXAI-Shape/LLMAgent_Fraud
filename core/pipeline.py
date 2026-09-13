@@ -24,6 +24,7 @@ import pandas as pd
 
 import config
 from agents import auditor, investigator, verifier
+from core import historial
 from data_pipeline import universal_loader
 from data_pipeline.ingest import REQUIRED_SHEETS, IngestValidationError, run_ingest
 
@@ -63,6 +64,7 @@ def ejecutar_pipeline(
     archivo: Path,
     rfcs: list[str] | None = None,
     model: str = config.OLLAMA_MODEL,
+    guardar_historial: bool = True,
 ) -> Iterator[dict[str, Any]]:
     """Corre Ingesta -> Investigador -> Verificador -> Auditor, reportando cada paso.
 
@@ -124,9 +126,37 @@ def ejecutar_pipeline(
 
     # --- Fase 4: Auditor ---
     yield {"fase": "auditor", "estado": "inicio"}
-    markdown = auditor.generate_case_file(confirmados, descartados)
+    markdown, redactado_por = auditor.generate_case_file(confirmados, descartados)
     output_path = auditor.save_case_file(markdown)
-    yield {"fase": "auditor", "estado": "ok", "datos": {"markdown": markdown, "output_path": str(output_path)}}
+
+    descartados_serializables = [{"lead": lead, "razon": razon} for lead, razon in descartados]
+
+    expediente_id = None
+    if guardar_historial:
+        # Archivar no debe poder tumbar una investigación que ya salió bien: si
+        # el historial falla, se avisa y se sigue. El expediente en disco y los
+        # dictámenes en `investigation_cases` ya están guardados a estas alturas.
+        try:
+            expediente_id = historial.guardar_expediente(
+                confirmados=confirmados,
+                descartados=descartados_serializables,
+                markdown=markdown,
+                redactado_por=redactado_por,
+                archivo_origen=Path(archivo).name,
+            )
+        except Exception as exc:
+            yield {"fase": "auditor", "estado": "progreso",
+                   "mensaje": f"No se pudo archivar el expediente en el historial: {exc}"}
+
+    yield {
+        "fase": "auditor", "estado": "ok",
+        "datos": {
+            "markdown": markdown,
+            "output_path": str(output_path),
+            "redactado_por": redactado_por,
+            "expediente_id": expediente_id,
+        },
+    }
 
     yield {
         "fase": "fin", "estado": "ok",
@@ -135,6 +165,9 @@ def ejecutar_pipeline(
             "n_descartados": len(descartados),
             "elapsed_seconds": round(time.time() - t0, 1),
             "confirmados": confirmados,
-            "descartados": [{"lead": lead, "razon": razon} for lead, razon in descartados],
+            "descartados": descartados_serializables,
+            "redactado_por": redactado_por,
+            "expediente_id": expediente_id,
+            "archivo_origen": Path(archivo).name,
         },
     }

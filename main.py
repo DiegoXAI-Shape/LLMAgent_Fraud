@@ -58,8 +58,14 @@ def main() -> None:
         elif fase == "auditor":
             if estado == "inicio":
                 print(f"[4/4] Auditor (Gemini, temp=0): redactando expediente final")
+            elif estado == "progreso":
+                print(f"    {evento['mensaje']}")
             elif estado == "ok":
-                print(f"\nExpediente generado -> {evento['datos']['output_path']}")
+                datos = evento["datos"]
+                print(f"\nExpediente generado -> {datos['output_path']}")
+                print(f"    redactado por: {datos['redactado_por']}")
+                if datos.get("expediente_id"):
+                    print(f"    archivado en historial: {datos['expediente_id']}")
 
         elif fase == "fin":
             d = evento["datos"]
