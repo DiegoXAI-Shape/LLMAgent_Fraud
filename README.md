@@ -1,24 +1,33 @@
 # Agente Forense de Fraude Fiscal (EFOS/SAT)
 
-Sistema de dos fases que investiga un dataset de facturación + movimientos
-bancarios, decide por sí mismo a quién vale la pena investigar, y solo acusa
-cuando puede probarlo con una fila exacta de la base de datos.
+Investiga los libros de una empresa (facturación + movimientos bancarios),
+decide **por sí mismo** a quién vale la pena investigar, y solo acusa cuando
+puede probarlo con una fila exacta de la base de datos. Cuando no puede
+probarlo, lo dice y lo deja en la lista de pistas descartadas.
 
 Reto: *"Given a company's books and only the hint that something is wrong, can
 an AI agent find the fraud, follow the money, and prove it, without accusing
 anyone it cannot back up?"*
 
+**La regla que gobierna todo el diseño:** ninguna cifra, RFC ni folio del
+expediente la genera un modelo de lenguaje. El modelo señala QUÉ fila mirar; el
+código resuelve su contenido con SQL.
+
 ## Arquitectura
 
 ```
-Excel (auditoria_empresa_input.xlsx)
-        │  ingest.py — pandas, sin LLM, valida tipos/nulos
+Excel · CSV · PDF · imagen de un CFDI
+        │  universal_loader.py — una sola puerta; traduce columnas ajenas y lee
+        │  documentos. Si el PDF trae texto, el modelo ni lo toca.
+        ▼
+   ingest.py — pandas, sin LLM, valida tipos y nulos
         ▼
    fraud.db (SQLite)
         │
-        ├── TRIAGE (investigator.get_candidate_rfcs) ── 4 detectores simples,
+        ├── TRIAGE (investigator.get_candidate_rfcs) ── 5 detectores simples,
         │   sin LLM: proveedor en lista 69-B, pago que no cuadra, dinero en
-        │   círculo, concepto vago sin entregable. Deciden a quién mirarle.
+        │   círculo, concepto vago sin entregable, depósito sin factura.
+        │   Deciden a quién mirarle; nadie le sirve una lista de sospechosos.
         │
         ▼
    INVESTIGADOR (investigator.py) — Qwen3.5:4b local vía Ollama, tool-calling
@@ -31,8 +40,14 @@ Excel (auditoria_empresa_input.xlsx)
         │   existe, pertenece al acusado, y tiene el vínculo probatorio de su
         │   tipología (69-B DEFINITIVO / ciclo cerrado / materialidad rota).
         ▼
-   AUDITOR (auditor.py) — Gemini, temperature=0. Redacta el expediente en
-        Markdown a partir de los casos YA verificados; no decide nada.
+   AUDITOR (auditor.py) — Gemini, temperature=0. Redacta el expediente a partir
+        │   de los casos YA verificados; no decide nada. Si Gemini no responde,
+        │   una plantilla determinista redacta lo mismo con peor prosa.
+        ▼
+   SALIDA ── expediente en Markdown y en PDF · rastro del dinero dibujado
+        (money_trail.py) · historial que sobrevive a la siguiente ingesta
+        (historial.py) · DEFENSOR (defensor.py), que responde preguntas del
+        juez sobre el expediente sin poder cambiar el dictamen.
 ```
 
 ## Setup
@@ -42,15 +57,38 @@ python -m venv venv
 venv\Scripts\activate          # Windows (en bash: source venv/Scripts/activate)
 pip install -r requirements.txt
 ollama pull qwen3.5:4b
-cp .env.example .env                            # llena GEMINI_API_KEY
+cp .env.example .env                            # llena GEMINI_API_KEY (opcional)
 ```
 
-Correr el pipeline completo:
+`GEMINI_API_KEY` es opcional: sin ella el expediente se redacta con la plantilla
+determinista y conserva los mismos montos, RFC y dictámenes.
+
+**Interfaz (lo que se usa en la demostración):**
+
+```bash
+streamlit run app.py
+```
+
+Cuatro páginas: investigación en vivo con las 4 fases, expedientes archivados,
+catálogo 69-B con un validador de RFC, y configuración con diagnóstico.
+
+**Línea de comandos:**
 
 ```bash
 python -m data_pipeline.generate_mock_data   # genera el Excel de demo
-python -m data_pipeline.ingest               # Excel -> fraud.db
-python main.py                               # investigación + verificación + expediente
+python main.py                               # pipeline completo
+python main.py --archivo mis_datos.xlsx      # Excel/CSV/PDF/imagen propios
+```
+
+Para datos propios hay una plantilla lista en `plantilla_entrada.xlsx`, con las
+5 hojas canónicas y una pestaña de instrucciones. La hoja `Lista_69B` puede ir
+vacía: los 11,631 RFC reales del SAT ya viven en la base.
+
+**Pruebas** (no requieren instalar nada: usan `unittest` de la biblioteca
+estándar):
+
+```bash
+python -m unittest discover -s tests -t .
 ```
 
 Refrescar los listados del SAT desde la fuente oficial (opcional, ya vienen
@@ -409,7 +447,7 @@ error se mide exacto.
 | descuento | 620.62 | 620.62 | correcto |
 | total | 6,843.95 | 6,843.95 | correcto |
 | razón social | ALMACEN DE DROGAS | igual | correcto |
-| RFC receptor | HECD0511139P3 | igual | correcto |
+| RFC receptor (persona física, enmascarado) | `HECD…9P3` | igual | correcto |
 | **RFC emisor** | **ADR531130N5A** | **ADSR51130N5A** | **MAL** |
 | método de pago | PUE | PU | truncado |
 
@@ -1028,6 +1066,46 @@ no hubo acusaciones, no hubo narrativa inventada para justificar el esfuerzo.
 Es un resultado corto pero vale registrarlo: un detector que siempre encuentra
 algo no sirve de nada. Que el sistema no diga nada cuando no hay nada que decir
 es la otra mitad de *"probar antes de acusar"*.
+
+### 26. Las pruebas, que hasta ahora vivían en scripts desechables
+
+Cada garantía de este sistema se había verificado con scripts sueltos que se
+corrían una vez y se perdían. Eso tiene dos problemas: el criterio de
+**Feasibility** del brief pregunta literalmente *"¿confiaría un equipo real de
+finanzas o auditoría en esto?"*, y un repositorio sin una sola prueba contesta
+mal esa pregunta. El otro es práctico: sin red, cada cambio de las últimas horas
+podía romper algo verificado ayer sin que nadie se enterara.
+
+`tests/` tiene ahora 21 pruebas con **`unittest`, no pytest**, y eso es
+deliberado: correrlas no debe exigir instalar nada. La máquina donde se haga la
+demostración puede no tener pytest, y una dependencia más es una cosa más que
+puede fallar ese día — el mismo criterio que llevó a `fpdf2` sobre `weasyprint`
+y al DOT dibujado en el navegador en vez del binario de Graphviz.
+
+```
+python -m unittest discover -s tests -t .
+```
+
+Qué cubren, y por qué esas y no otras:
+
+- **Dígito verificador del RFC** — con el caso real de la entrada 15: el RFC
+  auténtico pasa, el que la visión leyó mal falla y dice qué dígito esperaba.
+- **Rastro del dinero** — dibuja las contrapartes y el monto; devuelve `None`
+  (no un diagrama vacío) cuando la evidencia no respalda ningún movimiento.
+- **Expediente en PDF** — se genera con contenido, y no revienta sin casos.
+- **Las guardas del Defensor** — negar una imputación confirmada, y declarar mal
+  la situación 69-B de un proveedor.
+- **Propiedades del motor** — ningún ciclo reportado con menos de 3 nodos, los
+  umbrales respetan su piso, y `query_database` rechaza todo lo que no sea
+  lectura.
+
+**Lo que fija el diseño:** las guardas *advierten*, no bloquean, así que se
+prueban explícitamente los casos que **NO** deben disparar. Una alerta roja
+sobre una respuesta correcta desacredita justo lo que sí se sostiene — frente a
+un auditor, un falso positivo aquí cuesta tanto como uno que se escapa.
+
+Las pruebas que necesitan `fraud.db` se saltan solas si la base no existe, para
+que la suite corra en un repositorio recién clonado.
 
 ---
 
