@@ -240,8 +240,23 @@ def verify_lead(lead_dict: dict) -> tuple[bool, str]:
     if not _entity_exists(rfc_imputado):
         return False, f"{DESCARTADO}: el RFC imputado '{rfc_imputado}' no existe en fraud.db."
 
+    # Se distingue "el Investigador no concluyó nada" de "el Investigador inventó
+    # una tipología". El resultado es el mismo (no hay acusación), pero la razón
+    # que queda escrita en el expediente NO es la misma, y alguien la va a leer.
+    # Antes ambos casos salían como "tipo_esquema '' no es una tipología válida",
+    # que se lee como un error del programa en vez de como un dictamen — justo lo
+    # que un juez ve si revisa unos libros donde no hay nada que encontrar.
+    if not str(tipo_esquema or "").strip():
+        return False, (
+            f"{DESCARTADO}: el Investigador revisó las operaciones de {rfc_imputado} "
+            "y no tipificó ningún esquema de fraude. No hay acusación que sostener."
+        )
+
     if tipo_esquema not in ESQUEMAS_VALIDOS:
-        return False, f"{DESCARTADO}: tipo_esquema '{tipo_esquema}' no es una tipología válida."
+        return False, (
+            f"{DESCARTADO}: '{tipo_esquema}' no corresponde a ninguna de las tipologías "
+            f"reconocidas ({', '.join(sorted(ESQUEMAS_VALIDOS))})."
+        )
 
     if not evidencia:
         return False, f"{DESCARTADO}: no hay evidencia (facturas/transferencias) referenciada."

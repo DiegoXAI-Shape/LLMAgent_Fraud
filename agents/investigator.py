@@ -180,13 +180,34 @@ def get_candidate_rfcs() -> list[str]:
     )
     candidatos.update(row["rfc"] for row in proveedores_listados)
 
-    pagos_no_cuadran = tools.query_database(
-        "SELECT emisor_rfc, receptor_rfc FROM v_facturas_sin_pago_bancario "
-        f"WHERE ABS(discrepancia) > {MIN_DISCREPANCIA_PAGO}"
-    )
-    for fila in pagos_no_cuadran:
-        candidatos.add(fila["emisor_rfc"])
-        candidatos.add(fila["receptor_rfc"])
+    # El detector 2 solo corre si HAY datos bancarios. La vista
+    # v_facturas_sin_pago_bancario hace un LEFT JOIN contra bank_ledger: con la
+    # tabla vacía, `monto_pagado` sale 0 y la discrepancia es el total de la
+    # factura, así que TODA factura parece impagada y se nomina a ambas partes.
+    #
+    # Se midió con un CFDI suelto en PDF (2 entidades, 1 factura, 0 movimientos):
+    # el triage nominaba al emisor y al receptor de un documento donde no hay
+    # absolutamente nada, y se gastaban dos investigaciones del modelo para
+    # terminar descartando las dos.
+    #
+    # La ausencia de un estado de cuenta NO es evidencia de que una factura no se
+    # pagó: es ausencia de información. Es la misma regla que hace que
+    # verify_service_materiality devuelva None cuando no hay giro con qué
+    # comparar, y que el validador de RFC nunca descarte por su cuenta.
+    #
+    # El corte es a nivel dataset, no por factura: si hay algún movimiento
+    # bancario, el detector sigue trabajando normalmente — una factura realmente
+    # impagada dentro de una contabilidad con banco SÍ es señal, y es justo para
+    # lo que existe este detector.
+    hay_movimientos = tools.query_database("SELECT COUNT(*) AS n FROM bank_ledger")[0]["n"] > 0
+    if hay_movimientos:
+        pagos_no_cuadran = tools.query_database(
+            "SELECT emisor_rfc, receptor_rfc FROM v_facturas_sin_pago_bancario "
+            f"WHERE ABS(discrepancia) > {MIN_DISCREPANCIA_PAGO}"
+        )
+        for fila in pagos_no_cuadran:
+            candidatos.add(fila["emisor_rfc"])
+            candidatos.add(fila["receptor_rfc"])
 
     for ciclo in tools.find_money_cycles(min_amount=tools.umbral_ciclo_monto(), max_hops=8):
         candidatos.update(ciclo["ciclo_rfcs"])

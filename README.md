@@ -1107,6 +1107,63 @@ un auditor, un falso positivo aquí cuesta tanto como uno que se escapa.
 Las pruebas que necesitan `fraud.db` se saltan solas si la base no existe, para
 que la suite corra en un repositorio recién clonado.
 
+### 27. Un CFDI suelto: la ausencia de banco no es evidencia de impago
+
+Escenario plausible en la demostración y nunca probado de punta a punta: que un
+juez entregue **un solo CFDI en PDF** en vez de un Excel. El lector de documentos
+estaba probado por separado; el pipeline completo sobre ese input, no.
+
+**Lo primero, que era el riesgo real: no truena.** Ingesta → 2 entidades, 1
+factura, 0 confirmaciones, salida limpia. Cero acusaciones sobre un documento
+donde no hay nada. Pero dos detalles que un juez sí nota:
+
+1. El triage nominaba a **las dos partes** de esa única factura, y se gastaban
+   dos investigaciones completas del modelo para descartarlas.
+2. El motivo del descarte salía como `tipo_esquema '' no es una tipología
+   válida` — que **se lee como un error del programa**, no como un dictamen.
+
+**Diagnóstico, atribuyendo cada candidato a su detector:**
+
+```
+1. proveedor en 69-B    : []
+2. pago que no cuadra   : ADR…N5A -> HEC…9P3
+                          facturado $6,843.95 · pagado $0.00 · discrepancia $6,843.95
+3. ciclos de dinero     : 0
+4. concepto vago        : []
+5. depósito sin factura : []
+```
+
+El detector 2 consulta `v_facturas_sin_pago_bancario`, que hace `LEFT JOIN`
+contra `bank_ledger`. Con la tabla vacía, `monto_pagado` sale 0 y la discrepancia
+es el total de la factura — así que **toda factura parece impagada, siempre**.
+
+**El principio que se estaba violando:** la ausencia de un estado de cuenta no es
+evidencia de que una factura no se pagó; es ausencia de información. Es la misma
+regla que hace que `verify_service_materiality` devuelva `None` cuando no hay
+giro con qué comparar, y que el validador de RFC nunca descarte por su cuenta.
+Abstenerse, no afirmar.
+
+**El corte es a nivel dataset, no por factura**, y eso importa: si hay algún
+movimiento bancario, el detector sigue trabajando igual. Una factura realmente
+impagada dentro de una contabilidad que sí tiene banco **sí** es señal — es justo
+para lo que existe. Solo se calla cuando no hay absolutamente nada con qué
+cotejar.
+
+```
+CFDI suelto   triage 2 -> 0 RFC nominados     46.2s -> 0.5s
+demostración  triage 7 -> 7 RFC (los mismos)  con sus 57 movimientos intactos
+suite         21/21
+```
+
+El salto de 46.2s a 0.5s es todo tiempo que antes se quemaba investigando dos
+empresas sobre un documento sin nada que encontrar.
+
+**Y el mensaje del verificador ahora distingue dos cosas** que antes se veían
+igual: que el Investigador *no concluyó nada* ("revisó las operaciones y no
+tipificó ningún esquema de fraude; no hay acusación que sostener") y que
+*inventó una tipología* que no existe. El resultado es el mismo — no hay
+acusación — pero la razón queda escrita en el expediente y alguien la va a leer.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)
