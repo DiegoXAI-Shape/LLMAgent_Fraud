@@ -747,6 +747,93 @@ editando nada: el servidor llevaba encendido desde antes del cambio. Se mata
 (`Ctrl+C`) y se vuelve a levantar. Conviene recordarlo antes de perder tiempo
 depurando un fantasma.
 
+### 22. El interrogatorio: cuando inventar un dato no era el único riesgo
+
+El brief pide esto dos veces — en qué construir (*"responde una pregunta
+sorpresa sobre su razonamiento"*) y en el criterio de Judgment (*"¿puede
+defender un hallazgo cuando un juez pregunta?"*). Era el único momento en que el
+jurado interactúa directamente con el agente, y no existía nada.
+
+`agents/defensor.py` reusa el mismo loop ReAct y las mismas cuatro herramientas
+de solo lectura del Investigador, con una diferencia de fondo: **aquí el modelo
+no decide nada.** El dictamen ya lo cerró `verifier.py`; el Defensor solo explica
+decisiones tomadas, y puede ir a la base a traer la fila exacta que las respalda.
+
+**El hallazgo que obligó a rediseñar la guarda.** La primera versión heredó del
+Investigador la protección contra identificadores inventados (bitácora 9): se
+recolecta todo UUID y RFC que el modelo realmente vio, y si cita uno que no
+existe, se le corrige. En la primera prueba real esa guarda no detectó nada… y
+la respuesta era igual de inaceptable:
+
+```
+Pregunta:  ¿Por qué acusaste a esta empresa?
+Respuesta: "No acusé a GDH210804LCC porque su proveedor no aparece en el
+            listado 69-B..."
+```
+
+El expediente daba ese caso por **CONFIRMADO**. El modelo no inventó ningún
+dato: **invirtió la conclusión**. La lección es que proteger los identificadores
+no basta — el razonamiento también se puede fabricar, y un agente que se desdice
+de su propia acusación frente a un auditor hace más daño que uno que admite no
+saber.
+
+Dos respuestas, porque una sola no alcanzaba:
+
+1. **Regla 0 en el prompt: el dictamen no se relitiga.** Nunca decir que no se
+   acusó a alguien que está en confirmados, ni al revés. Y si al consultar la
+   base encuentra algo que parece contradecir el expediente, decirlo explícito
+   ("el expediente confirma X, pero el registro Y muestra Z") en vez de cambiar
+   la conclusión en silencio. Señalar una inconsistencia es útil; desdecirse
+   calladamente destruye la credibilidad del expediente completo.
+2. **Un detector de contradicción en código** (`_contradice_expediente`): busca
+   una negación en los ~140 caracteres previos a la mención de un RFC
+   confirmado. Es una heurística de texto, no un juez semántico, así que
+   **advierte en vez de bloquear** — igual que el validador de RFC nunca
+   descarta solo. 4 de 4 en pruebas unitarias, incluidos los dos casos negativos
+   que no deben disparar.
+
+**Diagnóstico honesto de la falla original:** el caso de prueba que le di era
+internamente inconsistente — afirmaba `EFOS_69B` sobre un proveedor que no
+estaba en el listado. Repetida la prueba con un caso real de la base
+(`KZH161209V32` que sí compró a `MHR190316MM2`, DEFINITIVO en el 69-B), las tres
+preguntas salieron limpias en 3.5–4.4s, citando el UUID real y el monto exacto,
+y consultando la base hasta 4 veces para citar la razón registrada de un
+descarte tal cual quedó asentada. O sea: el modelo tenía parte de razón al
+objetar. La guarda se queda igual, porque el día de la demostración nadie
+garantiza que la entrada sea consistente.
+
+### El rastro del dinero
+
+Clarity pide *"un rastro claro del dinero"* y "qué construir" pide que *"el
+agente rastree el dinero en pantalla"*. Había tablas, no recorrido.
+
+`core/money_trail.py` arma un diagrama en formato DOT desde la evidencia ya
+verificada y lo entrega como texto; **`st.graphviz_chart` lo dibuja en el
+navegador**. Esto es deliberado: ni el paquete de Python `graphviz` ni el binario
+`dot` del sistema hacen falta. Esta máquina sí tiene `dot.exe`, pero la del
+salón puede que no, y un diagrama que no aparece el día de la presentación vale
+menos que no tenerlo. Mismo criterio que llevó a `fpdf2` sobre `weasyprint`.
+
+**Un cambio necesario en `enrich_lead`:** la evidencia enriquecida guardaba el
+monto y el identificador de cada factura y transferencia, pero **no las
+contrapartes** — sabía *cuánto* se movió, no *entre quiénes*. `_get_invoice` y
+`_get_bank_tx` ya las traían de la base; solo no se almacenaban. Ahora sí, con lo
+que el expediente guardado se vuelve auto-suficiente para dibujar el flujo.
+
+Para `KICKBACK_CIRCULAR` hay un paso extra: la evidencia citada suele traer uno
+o dos tramos, y un tramo suelto no se ve como fraude — el anillo completo sí. Se
+reconstruye desde `bank_ledger` y se dibuja en rojo; si esos datos ya no están
+(expediente viejo), cae de vuelta a las aristas de la evidencia guardada.
+
+**La interfaz tuvo que reestructurarse para esto.** Streamlit reejecuta el script
+completo con cada interacción, así que escribir una pregunta en el interrogatorio
+disparaba otra investigación de 60 segundos y perdía el expediente anterior. Los
+resultados ahora se guardan en `st.session_state` en cuanto el pipeline termina,
+y el PDF se construye una sola vez ahí mismo en vez de rehacerse con cada
+pregunta.
+
+Ninguna de las dos piezas agregó una sola dependencia nueva.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

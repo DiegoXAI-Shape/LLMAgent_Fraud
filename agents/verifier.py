@@ -106,6 +106,11 @@ def enrich_lead(lead_dict: dict) -> dict:
                 # Que la fila exista no basta: tiene que involucrar al acusado. Si no,
                 # se pueden colgar facturas ajenas para inflar el monto defraudado.
                 "relevante": bool(fila and rfc in (fila["emisor_rfc"], fila["receptor_rfc"])),
+                # Las contrapartes se guardan aquí, no solo se consultan: sin ellas el
+                # expediente sabe CUÁNTO se movió pero no ENTRE QUIÉNES, y no se puede
+                # dibujar el rastro del dinero a partir de la evidencia guardada.
+                "emisor_rfc": fila["emisor_rfc"] if fila else None,
+                "receptor_rfc": fila["receptor_rfc"] if fila else None,
                 "cfdi_uuid": None,
             })
         elif tipo == "transferencia":
@@ -118,6 +123,8 @@ def enrich_lead(lead_dict: dict) -> dict:
                 "relevante": bool(
                     fila and rfc in (fila["cuenta_origen_rfc"], fila["cuenta_destino_rfc"])
                 ),
+                "origen_rfc": fila["cuenta_origen_rfc"] if fila else None,
+                "destino_rfc": fila["cuenta_destino_rfc"] if fila else None,
                 "cfdi_uuid": fila["cfdi_uuid"] if fila else None,
             })
         else:
