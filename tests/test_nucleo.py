@@ -125,6 +125,50 @@ class ExpedienteEnPDF(unittest.TestCase):
             self.assertTrue(construir_pdf([], [], destino).exists())
 
 
+class CuandoNoValeLaPenaReintentarAGemini(unittest.TestCase):
+    """Distinguir una saturación pasajera de una cuota que no se repone hoy.
+
+    Un 503 o un límite por minuto se resuelven esperando unos segundos: para eso
+    existen los reintentos. Una cuota DIARIA agotada no — se repone al día
+    siguiente, y cada reintento solo agrega espera muerta antes de caer a la
+    plantilla determinista. Se midió: tres intentos contra la cuota diaria
+    agregaron ~22 segundos a una corrida de poco más de un minuto.
+
+    Los textos de abajo son los que devolvió la API de verdad, no inventados.
+    """
+
+    CUOTA_DIARIA = (
+        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your "
+        "current quota', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'quotaId': "
+        "'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]}}"
+    )
+    SATURACION = (
+        "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently "
+        "experiencing high demand. Spikes in demand are usually temporary.'}}"
+    )
+    LIMITE_POR_MINUTO = (
+        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'details': [{'quotaId': "
+        "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'}]}}"
+    )
+
+    def _corta(self, texto: str) -> bool:
+        from agents.auditor import _es_cuota_diaria_agotada
+        return _es_cuota_diaria_agotada(Exception(texto))
+
+    def test_la_cuota_diaria_corta_los_reintentos(self):
+        self.assertTrue(self._corta(self.CUOTA_DIARIA))
+
+    def test_lo_pasajero_sigue_reintentandose(self):
+        # Aquí un falso positivo costaría caro: dejaría de reintentar un error
+        # que sí se resuelve solo, y el expediente perdería la prosa de Gemini
+        # sin necesidad.
+        for texto in (self.SATURACION, self.LIMITE_POR_MINUTO,
+                      "connection reset by peer",
+                      "No hay GEMINI_API_KEY configurada"):
+            with self.subTest(texto=texto[:40]):
+                self.assertFalse(self._corta(texto))
+
+
 @unittest.skipUnless(HAY_BASE, "requiere fraud.db (se crea con la primera ingesta)")
 class UmbralesYCiclos(unittest.TestCase):
     """Propiedades que deben cumplirse con cualquier dataset cargado."""

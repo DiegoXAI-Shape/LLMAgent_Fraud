@@ -1164,6 +1164,74 @@ tipificó ningún esquema de fraude; no hay acusación que sostener") y que
 *inventó una tipología* que no existe. El resultado es el mismo — no hay
 acusación — pero la razón queda escrita en el expediente y alguien la va a leer.
 
+### 28. La cuota diaria de Gemini se agotó, tal como el brief advirtió
+
+Corriendo el pipeline completo para comprobar que los cambios del motor no
+habían roto nada, el Auditor dejó de fallar con `503 UNAVAILABLE` (saturación
+pasajera) y empezó a fallar con algo distinto:
+
+```
+429 RESOURCE_EXHAUSTED
+quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+limit: 20, model: gemini-3.8-flash
+```
+
+Es exactamente lo que el brief del reto anticipaba: *"un modelo local (Ollama)
+con caché es más seguro que el free tier de Gemini solo, que puede topar límites
+diarios"*. El respaldo determinista hizo su trabajo y el expediente salió con los
+mismos hechos, montos e identificadores — pero el episodio dejó ver un defecto en
+los reintentos.
+
+**Reintentar una cuota diaria es tiempo muerto.** Los tres intentos con espera
+creciente existen para un 503 o un límite por minuto, que se resuelven en
+segundos. Una cuota diaria no se repone esperando: se repone mañana.
+
+**Lo que la medición sí sostiene, y lo que no.** Al escribir esta entrada se
+afirmó que el arreglo recuperaba ~22 segundos de la corrida. **La medición no lo
+respaldó** y la afirmación se corrige aquí:
+
+```
+antes:    3 intentos a Gemini · 75.3s totales
+después:  1 intento  a Gemini · 76.7s totales
+```
+
+Los intentos bajaron de 3 a 1 — eso es real y está verificado — y la fase del
+Auditor deja de esperar en balde. Pero **el total no mejoró**, porque lo domina
+el loop del Investigador sobre 7 RFC, que oscila decenas de segundos entre
+corridas: esta confirmó 6 casos en vez de 5, o sea hizo más trabajo. El ahorro
+existe donde se hizo el cambio y queda enterrado bajo una varianza mayor.
+
+Se deja registrado en vez de borrarlo porque es el mismo error de método que ya
+apareció en la entrada 19: **escribir la conclusión antes de medirla**. El
+arreglo se queda —no tiene sentido esperar por una cuota que se repone mañana—
+pero se queda por ser correcto, no por un ahorro de tiempo que no se observó.
+
+`_es_cuota_diaria_agotada` distingue ambos casos por el identificador de cuota
+que devuelve Google: los topes diarios traen `PerDay` en su `quotaId`. Se busca
+ese marcador y **no** la palabra "quota" a secas, justamente para no confundirlo
+con un límite por minuto, que sí conviene reintentar.
+
+**Sobre la variación entre corridas.** Esa misma corrida confirmó 5 casos y no 6,
+con $5,385,722.02 en vez de $7,261,871.49. La diferencia se explica entera y no
+es una regresión:
+
+- `VRH22081728I` quedó descartado porque el modelo citó una transferencia que
+  pertenece a otra empresa — el verificador lo atrapó. Es un descarte correcto
+  ($1,315,556.03).
+- `KZH161209V32` citó una de sus dos facturas en vez de las dos ($560,593.44
+  menos).
+
+$5,385,722.02 + $1,315,556.03 + $560,593.44 = $7,261,871.49, el total de
+referencia. El triage siguió nominando los mismos 7 RFC. Es la variabilidad ya
+conocida de Qwen turno a turno, y cuando falla, falla hacia el lado seguro:
+descarta de más, nunca acusa de más.
+
+**Nota de operación:** la corrida anterior murió por una caída de SSH
+(`exit 137`). La base quedó **intacta** — 27 entidades, 56 facturas, 57
+movimientos — porque la ingesta escribe dentro de una transacción que solo
+confirma al final. Vale registrarlo: un corte a media ingesta no deja la base a
+medias.
+
 ---
 
 ## Estado actual (verificado, no aspiracional)

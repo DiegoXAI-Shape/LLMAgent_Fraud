@@ -116,6 +116,24 @@ MAX_REINTENTOS_GEMINI = 3
 ESPERA_BASE_SEGUNDOS = 2.0
 
 
+def _es_cuota_diaria_agotada(exc: Exception) -> bool:
+    """¿El error es la cuota DIARIA del plan gratuito, y no algo pasajero?
+
+    Un 503 ("high demand") o un límite por minuto se resuelven esperando unos
+    segundos: por eso existen los reintentos. Una cuota diaria agotada NO — se
+    repone al día siguiente, y cada reintento solo agrega espera muerta antes de
+    caer a la plantilla.
+
+    La distinción se hace por el identificador de cuota que devuelve Google, que
+    para los topes diarios contiene `PerDay` (p. ej.
+    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`). Se busca ese marcador y
+    no la palabra "quota" a secas, precisamente para NO confundirlo con un límite
+    por minuto, que sí conviene reintentar.
+    """
+    texto = str(exc)
+    return "RESOURCE_EXHAUSTED" in texto and "perday" in texto.lower()
+
+
 def _tabla_evidencia(evidencia: list[dict[str, Any]] | None) -> list[str]:
     if not evidencia:
         return ["_(sin evidencia listada)_", ""]
@@ -245,6 +263,14 @@ def generate_case_file(
             print(f"Aviso: Gemini respondió vacío (intento {intento}).")
         except Exception as exc:
             print(f"Aviso: falló la llamada a Gemini (intento {intento}/{MAX_REINTENTOS_GEMINI}): {exc}")
+            if _es_cuota_diaria_agotada(exc):
+                # Reintentar no tiene sentido: la cuota se repone mañana, no en
+                # los segundos que dura una espera creciente. Se midió: tres
+                # intentos contra una cuota diaria agregaron ~22 segundos muertos
+                # a una corrida de demostración que dura poco más de un minuto.
+                print("Aviso: es la cuota DIARIA del plan gratuito, no una saturación "
+                      "pasajera. Se pasa de inmediato a la plantilla determinista.")
+                break
         if intento < MAX_REINTENTOS_GEMINI:
             time.sleep(ESPERA_BASE_SEGUNDOS * (2 ** (intento - 1)))
 
